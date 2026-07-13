@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="188" height="32" viewBox="0 0 188 32" role="img" aria-label="Qubesense OPRS — OpsFlo AI">
+  <defs>
+    <linearGradient id="qbMark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#635bff"/>
+      <stop offset="1" stop-color="#2ec5c1"/>
+    </linearGradient>
+  </defs>
+  <!-- Mark: a hex "cube" glyph -->
+  <g transform="translate(0,2)">
+    <path d="M14 0 L27 7 L27 21 L14 28 L1 21 L1 7 Z" fill="url(#qbMark)"/>
+    <path d="M14 6 L21.5 10.2 L21.5 17.8 L14 22 L6.5 17.8 L6.5 10.2 Z" fill="#ffffff" opacity="0.92"/>
+    <circle cx="14" cy="14" r="3.2" fill="url(#qbMark)"/>
+  </g>
+  <!-- Wordmark -->
+  <text x="36" y="15" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#1f2544">Qubesense</text>
+  <text x="36" y="28" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="600" letter-spacing="0.5" fill="#6b7194">OPRS · OpsFlo AI</text>
+</svg>

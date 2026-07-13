@@ -1,0 +1,329 @@
+/* ============================================================================
+   Daily Briefing Assistant — OpsFlo / Frest theme
+   ----------------------------------------------------------------------------
+   Matches the OpsFlo "AI Health & Predictive Maintenance" dashboard theme:
+   Inter font, #f8f7fa canvas, #5A8DEE primary, #5e5873/#6e6b7b/#b9b9c3 text
+   ramp, #ebe9f1 borders, rounded-xl cards with 0 4px 24px rgba(34,41,47,.06)
+   shadow, and the Critical/High/Medium/Low risk palette.
+   Layout utilities come from Tailwind (CDN); this file holds the palette
+   tokens and the few custom components.
+   ============================================================================ */
+
+:root {
+  --op-primary:   #5A8DEE;
+  --op-primary-d: #3D74E0;
+  --op-primary-l: #94B5F4;
+  --op-ink:       #5e5873;
+  --op-muted:     #6e6b7b;
+  --op-light:     #b9b9c3;
+  --op-border:    #ebe9f1;
+  --op-border-2:  #d8d6de;
+  --op-canvas:    #f8f7fa;
+  --op-critical:  #ea5455;
+  --op-high:      #ff9f43;
+  --op-medium:    #d97706;
+  --op-low:       #28c76f;
+  --op-card-shadow: 0 4px 24px 0 rgba(34, 41, 47, .06);
+}
+
+* { font-family: 'Inter', system-ui, sans-serif; }
+body {
+  margin: 0; background: var(--op-canvas); color: var(--op-ink);
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--op-border-2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #c4c2cd; }
+
+/* focus + selection polish */
+:focus-visible { outline: 2px solid rgba(90,141,238,.55); outline-offset: 2px; border-radius: 6px; }
+button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
+::selection { background: rgba(90,141,238,.18); }
+
+/* --------------------------- reusable card --------------------------------- */
+.op-card {
+  background: #fff;
+  border: 1px solid var(--op-border);
+  border-radius: 12px;
+  box-shadow: var(--op-card-shadow);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.op-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(31, 37, 68, .10);
+  border-color: #dfe1f0;
+}
+
+/* row hover inside section lists */
+.op-row { transition: background .12s ease; }
+.op-row:hover { background: #f8f9fd; }
+
+/* staggered entrance animation */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.reveal { animation: fadeUp .55s cubic-bezier(.22,.61,.36,1) backwards; animation-delay: var(--rd, 0ms); }
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation: none; }
+  .op-card:hover { transform: none; }
+}
+
+/* --------------------------- top navbar icon buttons ----------------------- */
+.navbar-icon-btn {
+  width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  color: var(--op-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+  position: relative;
+}
+.navbar-icon-btn:hover { background: rgba(90, 141, 238, .08); color: var(--op-primary); }
+
+/* --------------------------- horizontal menu nav items --------------------- */
+.sb-nav-btn { border: none; background: none; cursor: pointer; }
+
+/* --------------------------- chips / badges -------------------------------- */
+.role-chip {
+  background: rgba(90, 141, 238, .12);
+  color: var(--op-primary);
+  border: 1px solid rgba(90, 141, 238, .25);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.ai-badge {
+  background: rgba(90, 141, 238, .08);
+  color: var(--op-primary);
+  border: 1px solid rgba(90, 141, 238, .2);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.ai-badge .ai-time {
+  color: var(--op-light);
+  font-weight: 500;
+  border-left: 1px solid rgba(90, 141, 238, .25);
+  padding-left: 8px;
+}
+
+/* Risk badge classes — identical values to the OpsFlo dashboard */
+.risk-badge-Critical { background:#ffeaea; color:#ea5455; border:1px solid rgba(234,84,85,.3); }
+.risk-badge-High     { background:#fff4e6; color:#ff9f43; border:1px solid rgba(255,159,67,.3); }
+.risk-badge-Medium   { background:#fffbeb; color:#d97706; border:1px solid rgba(217,119,6,.3); }
+.risk-badge-Low      { background:#e6fff2; color:#28c76f; border:1px solid rgba(40,199,111,.3); }
+
+/* Priority + type badges reusing the exact palette */
+.badge-high { background:#ffeaea; color:#ea5455; border:1px solid rgba(234,84,85,.3); }
+.badge-med  { background:#fff4e6; color:#ff9f43; border:1px solid rgba(255,159,67,.3); }
+.badge-type { background:rgba(90,141,238,.12); color:#5A8DEE; border:1px solid rgba(90,141,238,.25); }
+
+/* --------------------------- risk dots ------------------------------------- */
+.risk-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; margin-top: 5px; }
+.risk-dot-high { background:#ea5455; box-shadow:0 0 0 4px rgba(234,84,85,.15); }
+.risk-dot-med  { background:#ff9f43; box-shadow:0 0 0 4px rgba(255,159,67,.15); }
+
+/* --------------------------- approve button (visual only) ------------------ */
+.approve-btn {
+  flex: 0 0 auto;
+  font-size: 11px; font-weight: 600;
+  border-radius: 8px; padding: 4px 11px;
+  border: 1px solid rgba(40, 199, 111, .4);
+  background: #e6fff2; color: #28c76f;
+  cursor: pointer; transition: background .15s;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.approve-btn:hover { background: #d5fbe8; }
+.approve-btn:disabled { cursor: default; }
+
+/* --------------------------- narrative typing ------------------------------ */
+.typing-caret {
+  display: inline-block;
+  width: 2px; height: 1.05em;
+  background: var(--op-primary);
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: caretBlink .9s steps(1) infinite;
+}
+@keyframes caretBlink { 50% { opacity: 0; } }
+
+/* KPI value pulse on regenerate */
+.kpi-bump { animation: kpiBump .5s ease; }
+@keyframes kpiBump {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
+/* --------------------------- bottom-right Demo button ----------------------- */
+.fab-demo {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 22px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--op-primary), var(--op-primary-d));
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(90, 141, 238, .38);
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.fab-demo:hover { transform: translateY(-2px); box-shadow: 0 14px 30px rgba(90, 141, 238, .46); }
+.fab-demo:active { transform: translateY(0); }
+@media (max-width: 480px) {
+  .fab-demo { right: 16px; bottom: 16px; padding: 12px 18px; font-size: 13px; }
+}
+
+/* ================= generated report (on-screen, pre-email) ================= */
+.report-preview {
+  text-align: left; color: var(--op-ink); font-size: 13px;
+  max-height: 72vh; overflow-y: auto; padding-right: 4px;
+}
+.rp-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.rp-title { font-size: 15px; font-weight: 700; color: var(--op-ink); }
+.rp-narrative {
+  font-size: 13.5px; line-height: 1.6; color: #2b2f38;
+  background: var(--op-canvas); border: 1px solid var(--op-border);
+  border-radius: 10px; padding: 12px 14px; margin: 0 0 4px;
+}
+.report-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 16px 0 6px;
+}
+.report-stat {
+  border: 1px solid var(--op-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fafbfd;
+}
+.report-stat-value { font-size: 22px; font-weight: 700; line-height: 1.1; }
+.report-stat-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--op-muted); margin-top: 5px;
+}
+.report-stat-sub { font-size: 11px; color: var(--op-light); margin-top: 2px; }
+
+/* --------------------------- footer action buttons ------------------------- */
+.btn-primary-op {
+  background: var(--op-primary); color: #fff;
+  border: none; border-radius: 8px;
+  padding: 8px 16px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background .15s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-primary-op:hover { background: var(--op-primary-d); }
+.btn-ghost-op {
+  background: #fff; color: var(--op-muted);
+  border: 1px solid var(--op-border-2); border-radius: 8px;
+  padding: 8px 16px; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: border-color .15s, color .15s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-ghost-op:hover { border-color: var(--op-primary); color: var(--op-primary); }
+
+/* ================= email preview (plain-text digest) ====================== */
+.email-preview { text-align: left; color: var(--op-ink); font-size: 13px; }
+
+/* --- reading-pane header (subject / from / to / sent) — plain metadata, no chrome --- */
+.ep-client {
+  background: var(--op-canvas);
+  border: 1px solid var(--op-border);
+  border-radius: 10px 10px 0 0;
+  padding: 10px 16px;
+}
+.ep-client-row { display: flex; gap: 10px; padding: 2px 0; font-size: 12px; }
+.ep-client-label { flex: 0 0 56px; color: var(--op-light); font-weight: 600; }
+.ep-client-value { color: var(--op-ink); font-weight: 500; word-break: break-word; }
+
+/* --- the actual sent HTML, rendered in an isolated iframe so preview == send --- */
+.ep-frame {
+  display: block;
+  width: 100%;
+  height: 60vh;
+  border: 1px solid var(--op-border);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  background: #fff;
+}
+
+.ep-sec-head {
+  margin: 20px 0 8px;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  color: var(--op-muted); text-transform: uppercase;
+}
+
+/* --- data tables (shift metrics, jobs, deployments, approvals, maintenance) --- */
+.ep-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-bottom: 4px; }
+.ep-table th,
+.ep-table td { padding: 6px 8px; border-bottom: 1px solid var(--op-border); text-align: left; vertical-align: top; }
+.ep-table th {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--op-light); border-bottom: 1px solid var(--op-border-2); white-space: nowrap;
+}
+.ep-table td.num,
+.ep-table th.num { text-align: right; white-space: nowrap; }
+.ep-table tbody tr:last-child td { border-bottom: none; }
+.ep-table tbody tr:nth-child(even) { background: #fafbfd; }
+
+@media (max-width: 480px) {
+  .ep-table { font-size: 11px; }
+  .ep-table th, .ep-table td { padding: 5px 6px; }
+}
+
+/* --------------------------- send-to trial form (email preview) ------------ */
+.ep-send {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--op-border-2);
+  text-align: left;
+}
+.ep-send-label {
+  display: block;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--op-muted); margin-bottom: 6px;
+}
+.ep-send-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.ep-send-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid var(--op-border-2);
+  border-radius: 8px;
+  color: var(--op-ink);
+  font-family: 'Inter', sans-serif;
+}
+.ep-send-input:focus { outline: 2px solid rgba(90,141,238,.4); outline-offset: 1px; border-color: var(--op-primary); }
+.ep-send-btn {
+  flex: 0 0 auto;
+  background: var(--op-primary); color: #fff;
+  border: none; border-radius: 8px;
+  padding: 8px 16px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background .15s;
+}
+.ep-send-btn:hover { background: var(--op-primary-d); }
+.ep-send-btn:disabled { opacity: .7; cursor: default; }
+.ep-send-status { min-height: 18px; margin-top: 8px; font-size: 12px; font-weight: 600; }
+.ep-send-status-ok { color: var(--op-low); }
+.ep-send-status-error { color: var(--op-critical); }
+
+.swal2-popup { border-radius: 12px !important; font-family: 'Inter', sans-serif !important; }
+.swal2-title { color: #5e5873 !important; }

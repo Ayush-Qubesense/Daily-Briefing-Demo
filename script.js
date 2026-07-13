@@ -1,12 +1,14 @@
 /* ============================================================================
-   Daily Work Report — rendering + interactions (OpsFlo / Frest theme)
+   Daily Briefing dashboard — rendering + interactions (OpsFlo / Frest theme)
    ----------------------------------------------------------------------------
-   Reads the global `DEMO` object from data.js. The navbar renders on load;
-   the report itself is generated on demand from the bottom-right "Demo"
-   button, structured into categories (jobs completed, jobs pending, tickets
-   closed, jobs overran, approvals pending, late deployments, overdue
-   maintenance, hours worked), with a "Preview Email" action that shows the
-   exact HTML email a user would receive. Both are SIMULATED — no network call.
+   Reads the global `DEMO` object from data.js. The dashboard is a persistent
+   page (not a modal): static chrome (navbar, sidebar, header) renders
+   immediately on load, then generateBriefing() shows a loading skeleton,
+   asks Gemini to narrate the shift, and renders the full dashboard in place.
+   "Generate New Briefing" re-narrates in place via regenerateNarrative() —
+   the KPIs/donut/schedule/risks never change, only the AI paragraph does.
+   "Share by Email" reuses the same email-preview + real-SMTP-send flow as
+   before; "Download PDF" is a real window.print() with print-friendly CSS.
    ============================================================================ */
 
 /* --------------------------- small helpers --------------------------------- */
@@ -56,7 +58,7 @@ function renderNav() {
 function renderChrome() {
   $("userAvatar").textContent = DEMO.userInitials || initials(DEMO.userName);
   $("userNameTop").textContent = DEMO.userName;
-  document.title = `Daily Work Report · ${DEMO.userName} · OpsFlo AI`;
+  document.title = `Daily Briefing · ${DEMO.userName} · OpsFlo AI`;
 }
 
 /* --------------------------- shared: category icons + tones ---------------- */
@@ -126,10 +128,15 @@ function buildReportStatsPayload() {
   };
 }
 
-// The session's active narrative — the curated DEMO.narrative until/unless
-// a live Gemini call replaces it (see wireDemoButton). Both the on-screen
-// report and the actually-sent email read from this, so they always match.
+// The session's active narrative — the curated DEMO.narrative until/unless a
+// live Gemini call replaces it (see generateBriefing/regenerateNarrative).
+// The dashboard and the actually-sent email both read from this, so they
+// always match.
 let currentNarrative = DEMO.narrative;
+
+// Set once the dashboard's real content (not the loading skeleton) has been
+// rendered — gates the FAB so early clicks during the initial load are ignored.
+let dashboardRendered = false;
 
 /* --------------------------- shared: plain data table ----------------------- */
 function reportTable(headers, rows, rightCols = []) {
@@ -145,50 +152,408 @@ const sectionHtml = (title, count, tableHtml) => `
   <div class="ep-sec-head">${esc(title.toUpperCase())}${count != null ? ` (${count})` : ""}</div>
   ${tableHtml}`;
 
-/* --------------------------- on-screen generated report --------------------- */
-function reportHtml() {
-  const stats = reportCategories().map((c) => `
-    <div class="report-stat">
-      <div class="report-stat-value" style="color:${TONE[c.tone]}">${esc(c.value)}</div>
-      <div class="report-stat-label">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">${CAT_ICON[c.icon]}</svg>
-        ${esc(c.label)}
-      </div>
-      <div class="report-stat-sub">${esc(c.sub)}</div>
-    </div>`).join("");
+/* --------------------------- dashboard: sidebar sections -------------------- */
+// Order here must match renderDashboard()'s actual composition order below —
+// this drives both the sidebar nav list and (via scroll-spy) what counts as
+// "next"/"previous" while scrolling, so a mismatch reads as a broken sidebar.
+const SECTIONS = [
+  { id: "sec-executive-summary",   label: "Executive Summary",   icon: "list"     },
+  { id: "sec-jobs-overview",       label: "Jobs Overview",       icon: "calendar" },
+  { id: "sec-schedule-highlights", label: "Schedule Highlights", icon: "clock"    },
+  { id: "sec-risks-alerts",        label: "Risks & Alerts",      icon: "alarm"    },
+  { id: "sec-team-utilization",    label: "Team & Utilization",  icon: "users"    },
+  { id: "sec-ai-insights",         label: "AI Insights",         icon: "trend"    },
+  { id: "sec-approvals-pending",   label: "Approvals & Pending", icon: "shield"   },
+  { id: "sec-actions-recommended", label: "Actions Recommended", icon: "target"   },
+];
 
-  const overranTable = reportTable(
-    ["Job", "Ticket", "Est.", "Actual", "Over"],
-    DEMO.overran.map((o) => [o.title, o.ticket, `${o.est}h`, `${o.actual}h`, `+${o.over}h`]),
-    [2, 3, 4]);
-  const lateTable = reportTable(
-    ["Item", "Type", "Late by", "Reason"],
-    DEMO.late.map((l) => [l.title, l.kind, `${l.mins} min`, l.reason]),
-    [2]);
-  const approvalsTable = reportTable(
-    ["Type", "Item", "Status"],
-    DEMO.approvals.map((a) => [a.type, a.title, a.meta]));
-  const maintTable = reportTable(
-    ["Asset", "Type", "Status"],
-    DEMO.maintenance.map((m) => [m.asset, m.resource, m.due]));
+function renderSidebar() {
+  $("dbDateLabel").textContent = todayLong();
+  $("dbSidebarNav").innerHTML = SECTIONS.map((s, i) => `
+    <button type="button" class="db-sidebar-nav-btn${i === 0 ? " active" : ""}" data-section="${s.id}">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">${CAT_ICON[s.icon]}</svg>
+      <span>${esc(s.label)}</span>
+    </button>`).join("");
+  $("dbSidebarNav").querySelectorAll("[data-section]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.getElementById(btn.dataset.section)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+  $("dbAboutText").textContent =
+    `This briefing is generated by OpsFlo AI using real-time data from your system as of ${DEMO.generatedAt}, ${todayLong()}.`;
+}
+
+/* --------------------------- dashboard: header ------------------------------ */
+function headerHtml() {
+  return `
+    <div class="db-header">
+      <div class="db-header-left">
+        <div class="db-header-icon">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6M9 9h1"/></svg>
+        </div>
+        <div>
+          <h1 class="db-header-title">Daily Briefing</h1>
+          <p class="db-header-sub">AI-powered summary of your operations for ${esc(yesterdayLong())}</p>
+        </div>
+      </div>
+      <div class="db-header-actions">
+        <button type="button" id="shareEmailBtn" class="btn-ghost-op">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></svg>
+          Share by Email
+        </button>
+        <button type="button" id="downloadPdfBtn" class="btn-ghost-op">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </button>
+      </div>
+    </div>`;
+}
+
+/* --------------------------- dashboard: chart helpers ------------------------ */
+// Hand-built SVG donut/ring — no charting library exists in this repo. Each
+// segment is one <circle> whose stroke-dasharray/-dashoffset carves out its
+// arc; wrapping in a -90deg rotated <g> starts the first segment at 12 o'clock.
+function buildDonutSvg(segments, { size = 160, stroke = 22 } = {}) {
+  const total = segments.reduce((sum, seg) => sum + seg.value, 0) || 1;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  let cumulative = 0;
+  const circles = segments.map((seg) => {
+    const len = (seg.value / total) * c;
+    const circle = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${seg.color}" stroke-width="${stroke}" stroke-dasharray="${len} ${c - len}" stroke-dashoffset="${-cumulative}" />`;
+    cumulative += len;
+    return circle;
+  }).join("");
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><g transform="rotate(-90 ${size / 2} ${size / 2})">${circles}</g></svg>`;
+}
+
+function buildRingSvg(percent, { size = 40, stroke = 5, color = TONE.info } = {}) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const len = (Math.max(0, Math.min(100, percent)) / 100) * c;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#ebe9f1" stroke-width="${stroke}" />
+    <g transform="rotate(-90 ${size / 2} ${size / 2})"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-dasharray="${len} ${c - len}" stroke-linecap="round" /></g>
+  </svg>`;
+}
+
+/* --------------------------- dashboard: data → view helpers ----------------- */
+// Completed + In Progress + Pending + a computed Overdue residual exhaustively
+// and non-overlappingly split jobsScheduled. NOT the same thing as `overran`
+// (jobs that ran over their time ESTIMATE — a completed job can be in both).
+function computedJobsOverdue() {
+  return Math.max(0, DEMO.jobsScheduled - DEMO.kpis[0].value - DEMO.jobsInProgress - DEMO.jobsPending);
+}
+
+function jobsOverviewSegments() {
+  return [
+    { label: "Completed",   value: DEMO.kpis[0].value,    tone: "success" },
+    { label: "In Progress", value: DEMO.jobsInProgress,   tone: "info"    },
+    { label: "Pending",     value: DEMO.jobsPending,      tone: "warning" },
+    { label: "Overdue",     value: computedJobsOverdue(), tone: "danger"  },
+  ];
+}
+
+function buildRiskAlerts() {
+  const alerts = [];
+  if (DEMO.overran.length) alerts.push({ dot: "high", headline: `${DEMO.overran.length} job${DEMO.overran.length === 1 ? "" : "s"} ran over estimate`, desc: "Action required" });
+  if (DEMO.late.length) alerts.push({ dot: "med", headline: `${DEMO.late.length} deployment${DEMO.late.length === 1 ? "" : "s"}/arrival${DEMO.late.length === 1 ? "" : "s"} ran late`, desc: "Monitor closely" });
+  if (DEMO.maintenance.length) alerts.push({ dot: "high", headline: `${DEMO.maintenance.length} maintenance item${DEMO.maintenance.length === 1 ? "" : "s"} overdue`, desc: "Escalation needed" });
+  return alerts;
+}
+
+function countHighRisk() {
+  return DEMO.late.filter((l) => l.risk === "high").length + DEMO.maintenance.filter((m) => m.risk === "high").length;
+}
+
+function calloutSummaryText() {
+  const rate = Math.round((DEMO.kpis[0].value / DEMO.jobsScheduled) * 100);
+  return `Overall operations are ${rate >= 75 ? "on track" : "behind schedule"}. ${rate}% of jobs completed, ${DEMO.approvals.length} pending approval${DEMO.approvals.length === 1 ? "" : "s"}, and ${countHighRisk()} risk${countHighRisk() === 1 ? "" : "s"} need attention.`;
+}
+
+function greetingWord() {
+  const h = new Date().getHours();
+  return h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
+}
+
+function buildActionsRecommended() {
+  const items = [];
+  if (DEMO.approvals.length) items.push(`Approve ${DEMO.approvals.length} pending item${DEMO.approvals.length === 1 ? "" : "s"}`);
+  if (DEMO.late.length) items.push(`Follow up on ${DEMO.late.length} late deployment${DEMO.late.length === 1 ? "" : "s"}/arrival${DEMO.late.length === 1 ? "" : "s"}`);
+  if (DEMO.overran.length) items.push(`Review ${DEMO.overran.length} job${DEMO.overran.length === 1 ? "" : "s"} that ran over estimate`);
+  const overdue = computedJobsOverdue();
+  if (overdue) items.push(`Clear ${overdue} overdue job${overdue === 1 ? "" : "s"}`);
+  if (DEMO.maintenance.length) items.push(`Resolve ${DEMO.maintenance.length} overdue maintenance item${DEMO.maintenance.length === 1 ? "" : "s"}, starting with ${DEMO.maintenance[0].asset}`);
+  return items;
+}
+
+// All 4 bullets are computed from real DEMO data (none hardcoded) — #1 is the
+// first thing in this app to actually read DEMO.kpis[0].spark.
+function buildAiInsights() {
+  const spark = DEMO.kpis[0].spark || [];
+  const last = spark[spark.length - 1];
+  const prev = spark[spark.length - 2];
+  const delta = last != null && prev != null ? last - prev : null;
+  const completedText =
+    delta == null ? "Job completions are being tracked shift over shift."
+    : delta > 0 ? `Jobs completed rose by ${delta} versus the previous shift.`
+    : delta < 0 ? `Jobs completed fell by ${Math.abs(delta)} versus the previous shift.`
+    : "Jobs completed held steady versus the previous shift.";
+  const overdue = computedJobsOverdue();
+  return [
+    { icon: "trend",  text: completedText },
+    { icon: "users",  text: `Team utilization is optimal at ${DEMO.team.utilizationRate}%.` },
+    { icon: "target", text: `On-time performance is holding at ${DEMO.gauge.value}% today.` },
+    { icon: "alarm",  text: `Focus on clearing ${overdue} overdue job${overdue === 1 ? "" : "s"} to stay on target.` },
+  ];
+}
+
+/* --------------------------- dashboard: KPI card ----------------------------- */
+function buildKpiCard({ label, value, sub, tone, delta, ring }) {
+  const deltaHtml = delta
+    ? `<div class="stat-card-delta stat-card-delta-${delta.dir}">
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="${delta.dir === "up" ? "M12 4l8 12H4z" : "M12 20 4 8h16z"}"/></svg>
+        ${esc(delta.delta)} vs yesterday
+      </div>`
+    : `<div class="stat-card-sub">${esc(sub)}</div>`;
+  const ringHtml = ring != null
+    ? `<div class="stat-card-ring">${buildRingSvg(ring, { color: TONE[tone] })}<span>${ring}%</span></div>`
+    : "";
+  return `
+    <div class="stat-card stat-card-accent-${tone}">
+      <div class="stat-card-top">
+        <div>
+          <div class="stat-card-value">${esc(value)}</div>
+          <div class="stat-card-label">${esc(label)}</div>
+        </div>
+        ${ringHtml}
+      </div>
+      ${deltaHtml}
+    </div>`;
+}
+
+/* --------------------------- dashboard: section builders --------------------- */
+function executiveSummarySectionHtml() {
+  const overdue = computedJobsOverdue();
+  const cards = [
+    buildKpiCard({ label: "Total Jobs", value: DEMO.jobsScheduled, sub: "scheduled for the shift", tone: "info" }),
+    buildKpiCard({
+      label: "Jobs Completed", value: DEMO.kpis[0].value, tone: "success",
+      delta: DEMO.kpis[0].trend ? { dir: DEMO.kpis[0].trend.dir, delta: DEMO.kpis[0].trend.delta } : null,
+      ring: Math.round((DEMO.kpis[0].value / DEMO.jobsScheduled) * 100),
+    }),
+    buildKpiCard({ label: "Jobs Pending", value: DEMO.jobsPending, sub: "rolled into today", tone: "warning" }),
+    buildKpiCard({ label: "Pending Approvals", value: DEMO.approvals.length, sub: "ready to approve", tone: "warning" }),
+    buildKpiCard({ label: "Overdue Jobs", value: overdue, sub: "need attention", tone: "danger" }),
+  ].join("");
 
   return `
-    <div class="report-preview">
-      <div class="rp-header">
-        <div class="rp-title">Daily Work Report — ${esc(yesterdayLong())}</div>
-        <span class="ai-badge" title="This report was written by OpsFlo AI">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h0M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>
-          Generated by OpsFlo AI
-          <span class="ai-time">${esc(DEMO.generatedAt)}</span>
-        </span>
+    <section class="db-section" id="sec-executive-summary">
+      <div class="db-callout">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h0M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>
+        <div>
+          <p class="db-callout-title">Good ${greetingWord()}, ${esc(DEMO.userName)}! Here's your AI-generated briefing.</p>
+          <p class="db-callout-sub">${esc(calloutSummaryText())}</p>
+        </div>
       </div>
+      <div class="db-stat-row">${cards}</div>
       <p class="rp-narrative">${esc(currentNarrative)}</p>
-      <div class="report-stat-grid">${stats}</div>
-      ${sectionHtml("Jobs that ran over", DEMO.overran.length, overranTable)}
-      ${sectionHtml("Late deployments & arrivals", DEMO.late.length, lateTable)}
-      ${sectionHtml("Approvals pending", DEMO.approvals.length, approvalsTable)}
-      ${sectionHtml("Overdue maintenance", DEMO.maintenance.length, maintTable)}
+    </section>`;
+}
+
+function jobsOverviewCardHtml() {
+  const segs = jobsOverviewSegments();
+  const total = DEMO.jobsScheduled;
+  const legend = segs.map((s) => `
+    <div class="donut-legend-row">
+      <span class="donut-legend-dot" style="background:${TONE[s.tone]}"></span>
+      <span class="donut-legend-label">${esc(s.label)}</span>
+      <span class="donut-legend-count">${s.value} (${Math.round((s.value / total) * 100)}%)</span>
+    </div>`).join("");
+  return `
+    <div class="op-card db-card">
+      <div class="db-card-head"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CAT_ICON.calendar}</svg>Jobs Overview</div>
+      <p class="db-card-caption">Distribution by status</p>
+      <div class="db-donut-row">
+        <div class="donut-wrap">
+          ${buildDonutSvg(segs.map((s) => ({ value: s.value, color: TONE[s.tone] })))}
+          <div class="donut-center-label"><strong>${total}</strong><span>Total</span></div>
+        </div>
+        <div class="donut-legend">${legend}</div>
+      </div>
+      <span class="db-card-link">View all jobs →</span>
     </div>`;
+}
+
+// Single-shift schedule performance only — the report covers one shift, so
+// this deliberately has no forward-looking (tomorrow/this-week) data.
+function scheduleHighlightsCardHtml() {
+  const late = DEMO.late.length;
+  const onTime = Math.max(0, DEMO.jobsScheduled - late);
+  const rows = [
+    { label: "Jobs Scheduled", count: DEMO.jobsScheduled, status: `${onTime} on time · ${late} late` },
+    { label: "Tickets Closed", count: DEMO.ticketsClosed, status: `across ${DEMO.sitesTouched} sites` },
+    { label: "On-Time Rate", count: `${DEMO.gauge.value}%`, status: DEMO.gauge.value >= 75 ? "On track" : "Below target" },
+  ];
+  return `
+    <div class="op-card db-card">
+      <div class="db-card-head"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CAT_ICON.clock}</svg>Schedule Highlights</div>
+      ${rows.map((r) => `
+        <div class="schedule-highlight-row">
+          <span class="schedule-highlight-label">${esc(r.label)}</span>
+          <div class="schedule-highlight-meta">
+            <span class="schedule-highlight-count">${esc(r.count)}</span>
+            <span class="schedule-highlight-status">${esc(r.status)}</span>
+          </div>
+        </div>`).join("")}
+      <span class="db-card-link">View shift details →</span>
+    </div>`;
+}
+
+function risksAlertsCardHtml() {
+  const alerts = buildRiskAlerts();
+  return `
+    <div class="op-card db-card">
+      <div class="db-card-head">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CAT_ICON.alarm}</svg>
+        Risks &amp; Alerts
+        ${alerts.length ? `<span class="risk-alert-badge">${alerts.length}</span>` : ""}
+      </div>
+      ${alerts.map((a) => `
+        <div class="risk-alert-row">
+          <span class="risk-dot risk-dot-${a.dot}"></span>
+          <div>
+            <div class="risk-alert-headline">${esc(a.headline)}</div>
+            <div class="risk-alert-desc">${esc(a.desc)}</div>
+          </div>
+        </div>`).join("")}
+      <span class="db-card-link">View all alerts →</span>
+    </div>`;
+}
+
+function aiInsightsSectionHtml() {
+  const insights = buildAiInsights();
+  return `
+    <div class="op-card db-card">
+      <div class="db-card-head"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h0M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>AI Insights</div>
+      <div class="ai-insight-grid">
+        ${insights.map((i) => `
+          <div class="ai-insight-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:#5A8DEE">${CAT_ICON[i.icon]}</svg>
+            <span>${esc(i.text)}</span>
+          </div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function approvalsPendingSectionHtml() {
+  return `
+    <div class="op-card db-card">
+      <div class="db-card-head"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CAT_ICON.shield}</svg>Approvals &amp; Pending (${DEMO.approvals.length})</div>
+      ${DEMO.approvals.map((a) => `
+        <div class="approval-row">
+          <div>
+            <div class="approval-row-title">${esc(a.title)}</div>
+            <div class="approval-row-meta">${esc(a.meta)}</div>
+          </div>
+          <span class="badge-type">${esc(a.type)}</span>
+          <button type="button" class="approve-btn" disabled title="Simulated — approving isn't wired up in this demo">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Approve
+          </button>
+        </div>`).join("")}
+    </div>`;
+}
+
+function teamUtilizationSectionHtml() {
+  const avgHours = (DEMO.kpis[3].value / DEMO.crewClockedIn).toFixed(1);
+  const rows = [
+    { label: "Crew Clocked In", value: DEMO.crewClockedIn, icon: "users" },
+    { label: "Hours Worked", value: DEMO.kpis[3].value, icon: "clock" },
+    { label: "Avg Hours / Crew Member", value: avgHours, icon: "target" },
+    { label: "Team Utilization", value: `${DEMO.team.utilizationRate}%`, icon: "trend" },
+  ];
+  return `
+    <div class="op-card db-card">
+      <div class="db-card-head"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CAT_ICON.users}</svg>Team &amp; Utilization</div>
+      <div class="db-stat-row db-stat-row-plain">
+        ${rows.map((r) => `
+          <div class="team-stat-row">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#5A8DEE;flex-shrink:0">${CAT_ICON[r.icon]}</svg>
+            <div>
+              <div class="team-stat-value">${esc(r.value)}</div>
+              <div class="team-stat-label">${esc(r.label)}</div>
+            </div>
+          </div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function actionsRecommendedSectionHtml() {
+  const items = buildActionsRecommended();
+  return `
+    <div class="op-card db-card">
+      <div class="db-card-head"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CAT_ICON.target}</svg>Actions Recommended</div>
+      ${items.map((text) => `
+        <div class="action-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:#5A8DEE"><circle cx="12" cy="12" r="9"/></svg>
+          <span>${esc(text)}</span>
+        </div>`).join("")}
+    </div>`;
+}
+
+/* --------------------------- dashboard: loading skeleton --------------------- */
+// Mirrors renderDashboard()'s section ids 1:1 so sidebar scroll-spy targets
+// exist even mid-load, and so the real content drops into the same shape.
+function renderDashboardSkeleton() {
+  const kpiSkel = Array.from({ length: 5 }, () => `
+    <div class="stat-card"><div class="skel skel-value"></div><div class="skel skel-label"></div></div>`).join("");
+  const cardSkel = `
+    <div class="op-card db-card">
+      <div class="skel skel-title" style="width:140px"></div>
+      <div class="skel skel-line" style="margin-top:14px"></div>
+      <div class="skel skel-line" style="width:80%"></div>
+      <div class="skel skel-line" style="width:60%"></div>
+    </div>`;
+  return `
+    <section class="db-section" id="sec-executive-summary">
+      <div class="db-callout skel-narrative-box">
+        <div class="skel skel-line" style="width:60%"></div>
+        <div class="skel skel-line" style="width:85%;margin-bottom:0"></div>
+      </div>
+      <div class="db-stat-row">${kpiSkel}</div>
+      <div class="rp-narrative skel-narrative-box">
+        <div class="skel skel-line"></div>
+        <div class="skel skel-line" style="width:92%"></div>
+        <div class="skel skel-line" style="width:55%;margin-bottom:0"></div>
+      </div>
+    </section>
+    <div class="db-row-3col">
+      <section class="db-section" id="sec-jobs-overview">${cardSkel}</section>
+      <section class="db-section" id="sec-schedule-highlights">${cardSkel}</section>
+      <section class="db-section" id="sec-risks-alerts">${cardSkel}</section>
+    </div>
+    <section class="db-section" id="sec-team-utilization">${cardSkel}</section>
+    <section class="db-section" id="sec-ai-insights">${cardSkel}</section>
+    <section class="db-section" id="sec-approvals-pending">${cardSkel}</section>
+    <section class="db-section" id="sec-actions-recommended">${cardSkel}</section>`;
+}
+
+function renderDashboard() {
+  $("dashboardMain").innerHTML = [
+    executiveSummarySectionHtml(),
+    `<div class="db-row-3col">
+       <section class="db-section" id="sec-jobs-overview">${jobsOverviewCardHtml()}</section>
+       <section class="db-section" id="sec-schedule-highlights">${scheduleHighlightsCardHtml()}</section>
+       <section class="db-section" id="sec-risks-alerts">${risksAlertsCardHtml()}</section>
+     </div>`,
+    `<section class="db-section" id="sec-team-utilization">${teamUtilizationSectionHtml()}</section>`,
+    `<section class="db-section" id="sec-ai-insights">${aiInsightsSectionHtml()}</section>`,
+    `<section class="db-section" id="sec-approvals-pending">${approvalsPendingSectionHtml()}</section>`,
+    `<section class="db-section" id="sec-actions-recommended">${actionsRecommendedSectionHtml()}</section>`,
+  ].join("");
+  dashboardRendered = true;
+  wireScrollSpy();
 }
 
 /* --------------------------- email preview ---------------------------------- */
@@ -258,6 +623,29 @@ function inlineSectionCard(title, count, tableHtml, accent) {
   </table>`;
 }
 
+// Plain bullet lines (no table/grid) — used for the condensed "Briefing
+// Highlights" summary, kept deliberately lighter than the detail tables.
+function inlineBulletList(items) {
+  return items.map((text) =>
+    `<p style="margin:0 0 6px;font-size:12.5px;line-height:1.5;color:#2b2f38;">&bull;&nbsp; ${esc(text)}</p>`
+  ).join("");
+}
+
+// A short digest of what's new on the dashboard beyond the stat grid/tables
+// below — shift schedule performance, team utilization, and the top
+// recommended actions — summarized in a few lines rather than mirroring the
+// full dashboard cards (donut chart, AI Insights grid, etc.) in the email.
+// Single-shift data only, matching the rest of the report's scope.
+function buildEmailHighlights() {
+  const late = DEMO.late.length;
+  const onTime = Math.max(0, DEMO.jobsScheduled - late);
+  return [
+    `${DEMO.jobsScheduled} jobs scheduled — ${onTime} on time, ${late} late, ${DEMO.gauge.value}% on-time rate`,
+    `Team utilization is at ${DEMO.team.utilizationRate}%, with ${DEMO.crewClockedIn} crew clocked in`,
+    ...buildActionsRecommended().slice(0, 3),
+  ];
+}
+
 function buildEmailMessageHtml() {
   const overranTable = inlineTable(
     ["Job", "Ticket", "Est.", "Actual", "Over"],
@@ -286,6 +674,7 @@ function buildEmailMessageHtml() {
           <tr><td style="padding:26px 28px 28px;">
             <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#5e5873;">${esc(DEMO.role)}</p>
             <p style="margin:0 0 6px;font-size:13.5px;line-height:1.6;color:#2b2f38;">${esc(currentNarrative)}</p>
+            ${inlineSectionCard("Briefing highlights", null, inlineBulletList(buildEmailHighlights()), "#5A8DEE")}
             ${inlineStatGrid(reportCategories())}
             ${inlineSectionCard("Jobs that ran over", DEMO.overran.length, overranTable, "#ff9f43")}
             ${inlineSectionCard("Late deployments & arrivals", DEMO.late.length, lateTable, "#ea5455")}
@@ -362,62 +751,95 @@ function wireSendTrialEmail(popup) {
   });
 }
 
-function openEmailPreview() {
-  return Swal.fire({
+async function openEmailPreview() {
+  await Swal.fire({
     html: emailPreviewHtml() + sendToFormHtml(),
     width: 700,
     padding: "1.25rem",
     showConfirmButton: true,
     confirmButtonText: "Close",
     confirmButtonColor: "#5A8DEE",
+    showClass: { popup: "swal-email-show" },
+    hideClass: { popup: "swal-email-hide" },
     didOpen: (popup) => wireSendTrialEmail(popup),
   });
 }
 
-/* --------------------------- Demo button: generate report ------------------ */
-function wireDemoButton() {
-  $("demoBtn").addEventListener("click", async () => {
-    Swal.fire({
-      title: "Generating report…",
-      html: "OpsFlo AI is summarizing yesterday's shift",
-      allowOutsideClick: false,
-      didOpen: () => Swal.showLoading(),
-    });
-
-    const minDelay = new Promise((r) => setTimeout(r, 700));
-    const generation = fetch("/api/generate-report", {
+/* --------------------------- dashboard: generate / regenerate --------------- */
+async function fetchNarrative() {
+  try {
+    const res = await fetch("/api/generate-report", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(buildReportStatsPayload()),
-    })
-      .then((res) => res.json().then((data) => ({ status: res.status, data })))
-      .then(({ status, data }) => {
-        if (status === 200 && data.ok && data.narrative) {
-          currentNarrative = data.narrative;
-        } else {
-          console.warn("Gemini generation unavailable, using curated narrative:", data.error);
-          currentNarrative = DEMO.narrative;
-        }
-      })
-      .catch((err) => {
-        console.warn("Gemini generation request failed, using curated narrative:", err);
-        currentNarrative = DEMO.narrative;
-      });
-    await Promise.all([generation, minDelay]);
-
-    const result = await Swal.fire({
-      html: reportHtml(),
-      width: 780,
-      padding: "1.25rem",
-      showCancelButton: true,
-      showConfirmButton: true,
-      confirmButtonText: "Preview Email",
-      cancelButtonText: "Close",
-      confirmButtonColor: "#5A8DEE",
-      cancelButtonColor: "#fff",
     });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok && data.narrative) {
+      currentNarrative = data.narrative;
+    } else {
+      console.warn("Gemini generation unavailable, using curated narrative:", data.error);
+      currentNarrative = DEMO.narrative;
+    }
+  } catch (err) {
+    console.warn("Gemini generation request failed, using curated narrative:", err);
+    currentNarrative = DEMO.narrative;
+  }
+}
 
-    if (result.isConfirmed) await openEmailPreview();
+// Runs once, on load: skeleton → fetch → full render. Builds the entire
+// section DOM (and wires scroll-spy) exactly once.
+async function generateBriefing() {
+  $("dashboardMain").innerHTML = renderDashboardSkeleton();
+  const minDelay = new Promise((r) => setTimeout(r, 700));
+  await Promise.all([fetchNarrative(), minDelay]);
+  renderDashboard();
+}
+
+// Runs on every subsequent "Generate New Briefing" click: only the AI
+// narrative paragraph re-fetches and repaints — the KPIs/donut/schedule/risks
+// are deterministic and never change, so they never re-flash, and scroll
+// position is naturally preserved (no full-page re-render).
+async function regenerateNarrative() {
+  const fab = $("fabGenerate");
+  const el = document.querySelector(".rp-narrative");
+  fab.disabled = true;
+  if (el) el.classList.add("narrative-pulse");
+  await fetchNarrative();
+  if (el) {
+    el.textContent = currentNarrative;
+    el.classList.remove("narrative-pulse");
+  }
+  fab.disabled = false;
+}
+
+/* --------------------------- dashboard: scroll-spy --------------------------- */
+function wireScrollSpy() {
+  const sections = Array.from(document.querySelectorAll(".db-section[id]"));
+  if (!sections.length) return;
+  const observer = new IntersectionObserver((entries) => {
+    const visible = entries
+      .filter((e) => e.isIntersecting)
+      .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+    if (visible[0]) setActiveSidebarItem(visible[0].target.id);
+  }, { rootMargin: "-140px 0px -55% 0px", threshold: 0 });
+  sections.forEach((s) => observer.observe(s));
+}
+
+function setActiveSidebarItem(id) {
+  $("dbSidebarNav").querySelectorAll("[data-section]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.section === id);
+  });
+}
+
+/* --------------------------- dashboard: header buttons + FAB ---------------- */
+function wireHeaderButtons() {
+  $("shareEmailBtn")?.addEventListener("click", openEmailPreview);
+  $("downloadPdfBtn")?.addEventListener("click", () => window.print());
+}
+
+function wireFab() {
+  $("fabGenerate").addEventListener("click", () => {
+    if (dashboardRendered) regenerateNarrative(); // ignore clicks during the initial load
   });
 }
 
@@ -425,8 +847,9 @@ function wireDemoButton() {
 document.addEventListener("DOMContentLoaded", () => {
   renderNav();
   renderChrome();
-  wireDemoButton();
-
-  const card = document.querySelector("main .op-card");
-  if (card) { card.style.setProperty("--rd", "60ms"); card.classList.add("reveal"); }
+  renderSidebar();
+  $("dbHeader").innerHTML = headerHtml();
+  wireHeaderButtons();
+  wireFab();
+  generateBriefing();
 });

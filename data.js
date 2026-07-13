@@ -40,11 +40,17 @@ const DEMO = {
 
   // --- Shift totals + gauge ------------------------------------------------
   jobsScheduled: 14,                            // FormDataPRIDEDispatchTicketChild, shiftdate = @date
-  jobsPending: 3,                               // rolled into today · jobStatus = 'Pending'/'InProgress'
+  jobsPending: 3,                               // rolled into today · jobStatus = 'Pending'
+  jobsInProgress: 1,                            // jobStatus = 'InProgress' — with kpis[0].value (completed) and
+                                                 // jobsPending, exhaustively splits jobsScheduled; the 4th ("overdue")
+                                                 // bucket is a computed residual, not stored (see script.js)
   ticketsClosed: 6,                             // FormDataPRIDEDispatchTicket.status = 'Closed'
   sitesTouched: 4,                              // COUNT(DISTINCT SiteID) for closed tickets
   crewClockedIn: 16,                            // COUNT(DISTINCT EmployeeId), payroll time-card logs
   gauge: { label: "On-Time Rate", value: 71 },  // (jobsScheduled − late) / jobsScheduled = 10/14
+
+  // --- Team utilization (Team & Utilization) --------------------------------
+  team: { utilizationRate: 85 },                // curated: hours worked / hours scheduled
 
   // --- KPI stat cards ------------------------------------------------------
   // tone → icon/trend accent: success | danger | warning | info

@@ -56,7 +56,6 @@ function renderNav() {
 function renderChrome() {
   $("userAvatar").textContent = DEMO.userInitials || initials(DEMO.userName);
   $("userNameTop").textContent = DEMO.userName;
-  $("userRoleTop").textContent = DEMO.org;
   document.title = `Daily Work Report · ${DEMO.userName} · OpsFlo AI`;
 }
 
@@ -103,6 +102,34 @@ function reportCategories() {
     { label: "Crew Clocked In",    value: DEMO.crewClockedIn,     sub: "employees on the clock",                        tone: "info",    icon: "users"    },
   ];
 }
+
+// Payload for POST /api/generate-report — the numbers are already computed
+// here; Gemini only narrates them, it never counts or does arithmetic.
+function buildReportStatsPayload() {
+  const totalOverHours = DEMO.overran.reduce((sum, o) => sum + o.over, 0);
+  const top = DEMO.maintenance[0];
+  return {
+    role: DEMO.role,
+    jobsScheduled: DEMO.jobsScheduled,
+    jobsCompleted: DEMO.kpis[0].value,
+    jobsPending: DEMO.jobsPending,
+    ticketsClosed: DEMO.ticketsClosed,
+    sitesTouched: DEMO.sitesTouched,
+    overranCount: DEMO.overran.length,
+    overranHours: Number(totalOverHours.toFixed(2)),
+    lateCount: DEMO.late.length,
+    crewClockedIn: DEMO.crewClockedIn,
+    hoursWorked: DEMO.kpis[3].value,
+    approvalsCount: DEMO.approvals.length,
+    maintenanceCount: DEMO.maintenance.length,
+    topMaintenance: top ? { asset: top.asset, due: top.due } : null,
+  };
+}
+
+// The session's active narrative — the curated DEMO.narrative until/unless
+// a live Gemini call replaces it (see wireDemoButton). Both the on-screen
+// report and the actually-sent email read from this, so they always match.
+let currentNarrative = DEMO.narrative;
 
 /* --------------------------- shared: plain data table ----------------------- */
 function reportTable(headers, rows, rightCols = []) {
@@ -155,7 +182,7 @@ function reportHtml() {
           <span class="ai-time">${esc(DEMO.generatedAt)}</span>
         </span>
       </div>
-      <p class="rp-narrative">${esc(DEMO.narrative)}</p>
+      <p class="rp-narrative">${esc(currentNarrative)}</p>
       <div class="report-stat-grid">${stats}</div>
       ${sectionHtml("Jobs that ran over", DEMO.overran.length, overranTable)}
       ${sectionHtml("Late deployments & arrivals", DEMO.late.length, lateTable)}
@@ -258,7 +285,7 @@ function buildEmailMessageHtml() {
           </td></tr>
           <tr><td style="padding:26px 28px 28px;">
             <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#5e5873;">${esc(DEMO.role)}</p>
-            <p style="margin:0 0 6px;font-size:13.5px;line-height:1.6;color:#2b2f38;">${esc(DEMO.narrative)}</p>
+            <p style="margin:0 0 6px;font-size:13.5px;line-height:1.6;color:#2b2f38;">${esc(currentNarrative)}</p>
             ${inlineStatGrid(reportCategories())}
             ${inlineSectionCard("Jobs that ran over", DEMO.overran.length, overranTable, "#ff9f43")}
             ${inlineSectionCard("Late deployments & arrivals", DEMO.late.length, lateTable, "#ea5455")}
@@ -356,7 +383,27 @@ function wireDemoButton() {
       allowOutsideClick: false,
       didOpen: () => Swal.showLoading(),
     });
-    await new Promise((r) => setTimeout(r, 1100));
+
+    const minDelay = new Promise((r) => setTimeout(r, 700));
+    const generation = fetch("/api/generate-report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildReportStatsPayload()),
+    })
+      .then((res) => res.json().then((data) => ({ status: res.status, data })))
+      .then(({ status, data }) => {
+        if (status === 200 && data.ok && data.narrative) {
+          currentNarrative = data.narrative;
+        } else {
+          console.warn("Gemini generation unavailable, using curated narrative:", data.error);
+          currentNarrative = DEMO.narrative;
+        }
+      })
+      .catch((err) => {
+        console.warn("Gemini generation request failed, using curated narrative:", err);
+        currentNarrative = DEMO.narrative;
+      });
+    await Promise.all([generation, minDelay]);
 
     const result = await Swal.fire({
       html: reportHtml(),

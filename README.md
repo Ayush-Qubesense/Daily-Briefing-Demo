@@ -6,12 +6,16 @@ last operating shift — jobs completed, jobs that ran over, late deployments/ar
 hours worked, approvals waiting, and overdue maintenance — shown in-app and (in the real
 product) delivered by email.
 
-This is a **concept demo for stakeholders**, not the product. The report itself is
-**curated content** rendered entirely in the browser — no external AI, no API keys — so
-it can't fail on stage. The one real piece of plumbing is a small **Python backend**
-(`api/send-email.py`) that can send an actual trial email over SMTP, to prove the
-"delivered by email" part of the concept, not just simulate it. The persona shown is a
-generic **Manager / Supervisor** working title (not tied to a specific person).
+This is a **concept demo for stakeholders**, not the product, but two pieces of it are
+real rather than simulated: a small **Python backend** (`api/generate-report.py`) asks
+**Gemini** to write the narrative paragraph from the shift's numbers each time you click
+**Demo** — the numbers themselves stay deterministic (computed in `data.js`/`script.js`,
+never counted or guessed by the model), Gemini only narrates them — and a second function
+(`api/send-email.py`) can send that report as an actual trial email over SMTP. Both are
+optional: with no `GEMINI_API_KEY`/SMTP vars set, the app **falls back to the curated
+narrative and a network-error toast on send**, so it still can't fail on stage even
+unconfigured. The persona shown is a generic **Manager / Supervisor** working title (not
+tied to a specific person).
 
 > **The numbers are curated, but the model is real.** Every KPI and section maps 1:1 to the
 > Qubesense NextGen OPRS schema — `SP_DailyBriefing_Activity(@ClientID, @date)` over
@@ -30,12 +34,14 @@ generic **Manager / Supervisor** working title (not tied to a specific person).
   stays on screen at all times.
 - **Empty-state landing page** — no dashboard clutter; a short blurb points at the **Demo**
   button.
-- **📋 Demo** — a floating button, bottom-right. Clicking it simulates AI generation (a brief
-  loading state), then opens the **generated report**: 12 category tiles (Jobs Scheduled,
-  Jobs Completed, Jobs Pending, Jobs Overran, On-Time Rate, Tickets Closed, Sites Touched,
-  Approvals Pending, Late Deployments, Overdue Maintenance, Hours Worked, Crew Clocked In)
-  plus detail tables for jobs that ran over, late deployments/arrivals, approvals, and
-  overdue maintenance.
+- **📋 Demo** — a floating button, bottom-right. Clicking it calls Gemini (with a loading
+  state while it writes) to narrate the shift, then opens the **generated report**: the
+  fresh AI narrative plus 12 category tiles (Jobs Scheduled, Jobs Completed, Jobs Pending,
+  Jobs Overran, On-Time Rate, Tickets Closed, Sites Touched, Approvals Pending, Late
+  Deployments, Overdue Maintenance, Hours Worked, Crew Clocked In) and detail tables for
+  jobs that ran over, late deployments/arrivals, approvals, and overdue maintenance. No
+  `GEMINI_API_KEY` configured → silently uses the curated `DEMO.narrative` instead, same
+  numbers either way. Click **Demo** again and the wording changes — proof it's live.
 - **Preview Email** — from the report modal, opens an on-screen preview of the exact HTML
   email that would be sent (plain-text-style layout, reusing the same data).
 - **Send Trial Email** — inside that preview, an editable "Send to" field (prefilled from
@@ -55,10 +61,12 @@ horizontal menu). Fully responsive so it looks right on a projector or a shared 
 | `index.html` | Navbar + empty-state landing page + the bottom-right "Demo" button. |
 | `styles.css` | OpsFlo/Frest theme tokens + custom components (FAB, report modal, email preview, send form). |
 | `script.js`  | Renders the navbar; generates the report + email preview from `DEMO`; wires the real send. |
-| `data.js`    | **The curated content** — edit this to change what's shown. |
+| `data.js`    | **The curated content** — edit this to change what's shown, and the AI's fallback narrative. |
+| `api/generate-report.py` | Vercel Python serverless function — asks Gemini to narrate the shift's numbers. |
 | `api/send-email.py` | Vercel Python serverless function — sends the report over SMTP. |
-| `requirements.txt` | Python deps for the serverless function (`Flask`). |
-| `.env.example` | Template for the SMTP env vars the send function needs. |
+| `dev_server.py` | Local-only convenience server (not deployed) — serves the static site + both functions on one port without needing the Vercel CLI. |
+| `requirements.txt` | Python deps for the serverless functions (`Flask`, `google-genai`). |
+| `.env.example` | Template for the SMTP + Gemini env vars the functions need. |
 | `assets/logo.svg` | Fallback SVG wordmark (the top bar uses the exact OpsFlo raster logo, inlined). |
 | `vercel.json` | Minimal static config (clean URLs). |
 
@@ -82,22 +90,30 @@ No build step. Any of these works:
   ```
   then open the printed URL (e.g. http://localhost:8000).
 
-The "Demo" button, generated report, and email preview all work this way. **Send Trial
-Email** will fail with a network error, since there's no backend behind a plain static
-server — for that you need the Python function running too (below).
+The "Demo" button and email preview both work this way, but with no backend behind a
+plain static server, Gemini generation and **Send Trial Email** will fail with a network
+error and the report silently falls back to the curated narrative — for real AI + real
+send you need one of the Python functions running too (below).
 
-### With the real email send
-
-The send endpoint is a Vercel Python serverless function, so local testing goes through
-the Vercel CLI, which serves the static files *and* `api/send-email.py` together on one
-port — the same setup as production.
+### With real Gemini generation and/or email send
 
 ```bash
-npm i -g vercel        # one-time
 pip install -r requirements.txt
-cp .env.example .env   # then fill in real SMTP values, see below
-vercel dev
+cp .env.example .env   # then fill in real values, see below
 ```
+
+Then either:
+
+- **`python dev_server.py`** — no Vercel CLI/login needed; serves the static site and
+  both functions together on `http://localhost:3000` (or set `PORT`). Good for quick
+  local testing.
+- **`vercel dev`** (needs `npm i -g vercel` once) — closer to how it behaves once
+  deployed, since it's the actual Vercel Python runtime rather than a Flask stand-in.
+
+**Gemini setup:** get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+and set `GEMINI_API_KEY` in `.env`. Optional `GEMINI_MODEL` overrides the default
+(`gemini-2.5-flash`). No key set → the report just uses the curated `DEMO.narrative`,
+no error shown.
 
 **SMTP setup (Gmail):** `SMTP_USER`/`SMTP_PASS` must be a Google Account **App Password**
 (Account → Security → 2-Step Verification → App Passwords — requires 2-Step Verification
@@ -106,7 +122,8 @@ to be turned on first; your normal Gmail password will not work). Set `SMTP_HOST
 Any other SMTP provider (Outlook, a company relay, etc.) works too — just point the same
 five variables at it.
 
-`.env` is gitignored — never commit real credentials.
+`.env` is gitignored — never commit real credentials. (`.env.example` is **not**
+gitignored — it should only ever hold placeholder values, never real ones.)
 
 ---
 
@@ -117,7 +134,7 @@ Open **`data.js`** and edit the top of the `DEMO` object:
 ```js
 userName:     "Manager",                   // navbar name + avatar initials + generated report — kept generic on purpose
 userInitials: "MG",                        // avatar circle text
-userEmail:    "priya.n@indoglobus.com",    // default prefill for the "Send to" field in the email preview
+userEmail:    "manager.n@indoglobus.com",  // shown in the email preview's "To" field
 role:         "Manager / Supervisor",
 ```
 
@@ -129,65 +146,10 @@ number, update the `narrative` sentence to match — the demo is written to be s
 
 ---
 
-## Deploy to Vercel
-
-Two supported paths:
-
-### Option A — Vercel CLI
-```bash
-npm i -g vercel
-cd Demo
-vercel            # first run: accept defaults, no framework preset (it's a static project)
-vercel --prod     # gives you the shareable production URL
-```
-(One-time: `vercel login`.)
-
-### Option B — Git + Vercel dashboard
-1. Push this folder to a new GitHub repo.
-2. In the Vercel dashboard → **Add New… → Project → Import** the repo.
-3. Framework preset: **Other**. Deploy — Vercel auto-detects `api/send-email.py` as a
-   Python serverless function alongside the static files.
-4. It auto-redeploys on every push.
-
-### Environment variables (required for real sending)
-
-The rest of the demo needs zero configuration, but **Send Trial Email** won't work in
-production until you set the same five SMTP variables from `.env.example` on the Vercel
-project — either:
-
-```bash
-vercel env add SMTP_HOST
-vercel env add SMTP_PORT
-vercel env add SMTP_USER
-vercel env add SMTP_PASS
-vercel env add FROM_EMAIL
-```
-
-or via the Vercel dashboard → **Project → Settings → Environment Variables**. Redeploy
-after adding them.
-
----
-
-## Before the demo (checklist)
-
-- [ ] Preview locally and click through the whole path once.
-- [ ] Set `userEmail` in `data.js` to whoever you're demoing to (or plan to type a different
-      address into the "Send to" field live).
-- [ ] Set the SMTP env vars (locally in `.env`, or on Vercel via `vercel env add`) and send
-      yourself one real trial email beforehand to confirm delivery before you're on stage.
-- [ ] Deploy and open the **live URL** once — confirm it renders and **Send Trial Email**
-      works on the deployed site, not just locally.
-- [ ] Projector check: browser zoom, resolution, and a quick mobile/responsive resize.
-- [ ] Rehearse the ~2-minute path: open → click **Demo** → walk through the generated
-      report → **Preview Email** → type a recipient → **Send Trial Email** → show it land
-      in the inbox.
-
----
-
 ## Talking points — "what's next" (not built here)
 
-- **Real generation** via OpsFlo AI (`/api/ask`) instead of curated text.
-- **Live OPRS data** feeding the report categories, in place of the curated `data.js`.
+- **Live OPRS data** feeding the report categories and the Gemini prompt, in place of the
+  curated `data.js` — the generation call itself is already real, only the input data is mocked.
 - **Per-role variants** — dispatcher, field tech, executive.
 - **Scheduled morning delivery** (background job) that sends automatically, instead of a
   manual trial-send button.

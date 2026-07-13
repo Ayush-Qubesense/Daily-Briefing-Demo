@@ -3,10 +3,11 @@ Local-only dev server — NOT deployed to Vercel.
 
 Vercel only turns files under api/ into serverless functions, so this file is
 invisible to the actual deployment. It exists purely so you can test the full
-flow (static site + real SMTP send) locally without installing/logging into
-the Vercel CLI: it imports the same Flask `app` object from
-api/send-email.py unchanged and just adds routes to serve the static files
-next to it.
+flow (static site + real SMTP send + Gemini report generation) locally
+without installing/logging into the Vercel CLI: it imports the same Flask
+`app` object from api/send-email.py, registers api/generate-report.py's view
+function onto that same app, and adds routes to serve the static files next
+to them — all three under one local port, same as they'll be on Vercel.
 
 Run:  python dev_server.py
 """
@@ -32,10 +33,22 @@ def load_env_file(path):
 
 load_env_file(ROOT / ".env")
 
-spec = importlib.util.spec_from_file_location("send_email", ROOT / "api" / "send-email.py")
-send_email = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(send_email)
+def load_api_module(name, filename):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "api" / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+send_email = load_api_module("send_email", "send-email.py")
+generate_report = load_api_module("generate_report", "generate-report.py")
+
 app = send_email.app
+app.add_url_rule(
+    "/api/generate-report",
+    view_func=generate_report.generate_report,
+    methods=["POST"],
+)
 
 STATIC_FILES = {"index.html", "script.js", "styles.css", "data.js"}
 
@@ -59,8 +72,11 @@ def assets(name):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
-    missing = send_email._missing_env_vars()
-    if missing:
-        print(f"Warning: missing SMTP env vars {missing} — Send Trial Email will fail until .env is filled in.")
+    missing_smtp = send_email._missing_env_vars()
+    if missing_smtp:
+        print(f"Warning: missing SMTP env vars {missing_smtp} — Send Trial Email will fail until .env is filled in.")
+    missing_gemini = generate_report._missing_env_vars()
+    if missing_gemini:
+        print(f"Note: missing {missing_gemini} — reports will use the curated narrative (Gemini fallback).")
     print(f"Serving http://localhost:{port}")
     app.run(host="127.0.0.1", port=port)

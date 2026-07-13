@@ -24,7 +24,7 @@ const DEMO = {
   // --- Persona -------------------------------------------------------------
   userName: "Manager",
   userInitials: "MG",
-  userEmail: "priya.n@indoglobus.com",
+  userEmail: "manager.n@indoglobus.com",
   role: "Manager / Supervisor",
   org: "NG Fleet",
   generatedAt: "07:02 AM",

@@ -27,7 +27,8 @@ const DEMO = {
   userEmail: "manager.n@indoglobus.com",
   role: "Manager / Supervisor",
   org: "NG Fleet",
-  generatedAt: "07:02 AM",
+  // Generation time is computed live from the visitor's clock (see nowTime()
+  // in script.js), not stored here — a fixed timestamp would go stale.
 
   // --- AI narrative (the "AI wrote this" moment) ---------------------------
   narrative:

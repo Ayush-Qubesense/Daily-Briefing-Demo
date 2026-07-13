@@ -29,6 +29,8 @@ const yesterdayLong = () => {
   return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 };
 const nowTime = () => new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+const fmtUSD = (n) => `$${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+const shiftDateKey = (d) => `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
 
 /* --------------------------- horizontal menu nav --------------------------- */
 const navItems = [
@@ -75,12 +77,14 @@ const CAT_ICON = {
   target:   '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
   pin:      '<path d="M12 21s-6-5.686-6-10a6 6 0 1 1 12 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2"/>',
   users:    '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  dollar:   '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
 };
 const TONE = {
   success: "#28c76f",
   danger:  "#ea5455",
   warning: "#ff9f43",
   info:    "#5A8DEE",
+  purple:  "#7367F0",
 };
 
 /* --------------------------- report: category stats ------------------------ */
@@ -101,7 +105,7 @@ function reportCategories() {
     { label: "Approvals Pending",  value: DEMO.approvals.length,  sub: "ready to approve",                              tone: "warning", icon: "shield"   },
     { label: "Late Deployments",   value: DEMO.late.length,       sub: "deployments & arrivals",                        tone: "warning", icon: "alarm"    },
     { label: "Overdue Maintenance",value: DEMO.maintenance.length,sub: "assets need service",                           tone: "danger",  icon: "tool"     },
-    { label: "Hours Worked",       value: DEMO.kpis[3].value,     sub: DEMO.kpis[3].sub,                                tone: "info",    icon: "clock"    },
+    { label: "Hours Worked",       value: DEMO.kpis[3].value,     sub: `${DEMO.crewClockedIn} crew clocked in`,         tone: "info",    icon: "clock"    },
     { label: "Crew Clocked In",    value: DEMO.crewClockedIn,     sub: "employees on the clock",                        tone: "info",    icon: "users"    },
   ];
 }
@@ -129,11 +133,41 @@ function buildReportStatsPayload() {
   };
 }
 
-// The session's active narrative — the curated DEMO.narrative until/unless a
-// live Gemini call replaces it (see generateBriefing/regenerateNarrative).
-// The dashboard and the actually-sent email both read from this, so they
-// always match.
-let currentNarrative = DEMO.narrative;
+// The session's active narrative — the computed fallbackNarrative() until/
+// unless a live Gemini call replaces it (see generateBriefing/
+// regenerateNarrative). The dashboard and the actually-sent email both read
+// from this, so they always match.
+let currentNarrative = fallbackNarrative();
+
+// Revenue/billing figures, loaded from assets/field-service-data.json (a
+// synthetic Field Service Report export) via fetchRevenueData()/
+// applyShiftMetrics() below — all anchored to the same "yesterday" date as
+// the shift-count fields on DEMO, so every number on the dashboard describes
+// the same day. This hardcoded object (real figures for 07/12/2026, the
+// dataset's own "yesterday" at the time it was generated) is only the
+// fallback shown if that fetch fails — same "can't fail on stage" pattern
+// as fallbackNarrative() for the Gemini call.
+let REVENUE = {
+  revenueYesterday: 52770, jobsYesterday: 9, billableJobsYesterday: 7,
+  revenue7d: 221957.5, jobs7d: 69, revenue7dDeltaPct: -11,
+  revenueMTD: 379625, jobsMTD: 126,
+  byOperationYesterday: [
+    { operation: "Clamp Install", revenue: 33972.5 },
+    { operation: "MLE + >=2 Clamps Install", revenue: 10782.5 },
+    { operation: "Clamp Install, MLE Install", revenue: 4462.5 },
+    { operation: "MLE Install", revenue: 1807.5 },
+    { operation: "Clamp Pull", revenue: 1745 },
+  ],
+  dailyTrend: [
+    { date: "07/06/2026", revenue: 32907.5 },
+    { date: "07/07/2026", revenue: 20420 },
+    { date: "07/08/2026", revenue: 27617.5 },
+    { date: "07/09/2026", revenue: 64547.5 },
+    { date: "07/10/2026", revenue: 14480 },
+    { date: "07/11/2026", revenue: 9215 },
+    { date: "07/12/2026", revenue: 52770 },
+  ],
+};
 
 // When the briefing was last (re)generated — real wall-clock time, refreshed
 // on every fetchNarrative() call, not a fixed demo string.
@@ -163,11 +197,13 @@ const sectionHtml = (title, count, tableHtml) => `
 // "next"/"previous" while scrolling, so a mismatch reads as a broken sidebar.
 const SECTIONS = [
   { id: "sec-executive-summary",   label: "Executive Summary",   icon: "list"     },
-  { id: "sec-jobs-overview",       label: "Jobs Overview",       icon: "calendar" },
+  { id: "sec-revenue-overview",    label: "Revenue Overview",    icon: "dollar"   },
+  { id: "sec-yesterday-summary",   label: "Yesterday Summary",   icon: "list"     },
   { id: "sec-schedule-highlights", label: "Schedule Highlights", icon: "clock"    },
   { id: "sec-risks-alerts",        label: "Risks & Alerts",      icon: "alarm"    },
-  { id: "sec-team-utilization",    label: "Team & Utilization",  icon: "users"    },
+  { id: "sec-jobs-overview",       label: "Jobs Overview",       icon: "calendar" },
   { id: "sec-ai-insights",         label: "AI Insights",         icon: "trend"    },
+  { id: "sec-team-utilization",    label: "Team & Utilization",  icon: "users"    },
   { id: "sec-approvals-pending",   label: "Approvals & Pending", icon: "shield"   },
   { id: "sec-actions-recommended", label: "Actions Recommended", icon: "target"   },
 ];
@@ -188,6 +224,7 @@ function renderSidebar() {
     </button>`).join("");
   $("dbSidebarNav").querySelectorAll("[data-section]").forEach((btn) => {
     btn.addEventListener("click", () => {
+      setActiveSidebarItem(btn.dataset.section);
       document.getElementById(btn.dataset.section)?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   });
@@ -238,30 +275,24 @@ function buildDonutSvg(segments, { size = 160, stroke = 22 } = {}) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><g transform="rotate(-90 ${size / 2} ${size / 2})">${circles}</g></svg>`;
 }
 
-function buildRingSvg(percent, { size = 40, stroke = 5, color = TONE.info } = {}) {
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  const len = (Math.max(0, Math.min(100, percent)) / 100) * c;
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#ebe9f1" stroke-width="${stroke}" />
-    <g transform="rotate(-90 ${size / 2} ${size / 2})"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-dasharray="${len} ${c - len}" stroke-linecap="round" /></g>
-  </svg>`;
-}
-
 /* --------------------------- dashboard: data → view helpers ----------------- */
-// Completed + In Progress + Pending + a computed Overdue residual exhaustively
-// and non-overlappingly split jobsScheduled. NOT the same thing as `overran`
-// (jobs that ran over their time ESTIMATE — a completed job can be in both).
-function computedJobsOverdue() {
+// Completed + In Progress + Pending + a computed Unworked residual
+// exhaustively and non-overlappingly split jobsScheduled. NOT the same
+// thing as `overran` (jobs that ran over their time ESTIMATE — a completed
+// job can be in both). Named "Unworked", not "Overdue", to avoid reading as
+// a synonym of `overran` elsewhere on the dashboard — this bucket is jobs
+// never picked up at all, a different failure mode from a completed job
+// that simply took longer than planned.
+function computedUnworkedJobs() {
   return Math.max(0, DEMO.jobsScheduled - DEMO.kpis[0].value - DEMO.jobsInProgress - DEMO.jobsPending);
 }
 
 function jobsOverviewSegments() {
   return [
-    { label: "Completed",   value: DEMO.kpis[0].value,    tone: "success" },
-    { label: "In Progress", value: DEMO.jobsInProgress,   tone: "info"    },
-    { label: "Pending",     value: DEMO.jobsPending,      tone: "warning" },
-    { label: "Overdue",     value: computedJobsOverdue(), tone: "danger"  },
+    { label: "Completed",   value: DEMO.kpis[0].value,     tone: "success" },
+    { label: "In Progress", value: DEMO.jobsInProgress,    tone: "info"    },
+    { label: "Pending",     value: DEMO.jobsPending,       tone: "warning" },
+    { label: "Unworked",    value: computedUnworkedJobs(), tone: "danger"  },
   ];
 }
 
@@ -292,7 +323,7 @@ function buildActionsRecommended() {
   if (DEMO.approvals.length) items.push(`Approve ${DEMO.approvals.length} pending item${DEMO.approvals.length === 1 ? "" : "s"}`);
   if (DEMO.late.length) items.push(`Follow up on ${DEMO.late.length} late deployment${DEMO.late.length === 1 ? "" : "s"}/arrival${DEMO.late.length === 1 ? "" : "s"}`);
   if (DEMO.overran.length) items.push(`Review ${DEMO.overran.length} job${DEMO.overran.length === 1 ? "" : "s"} that ran over estimate`);
-  const overdue = computedJobsOverdue();
+  const overdue = computedUnworkedJobs();
   if (overdue) items.push(`Clear ${overdue} overdue job${overdue === 1 ? "" : "s"}`);
   if (DEMO.maintenance.length) items.push(`Resolve ${DEMO.maintenance.length} overdue maintenance item${DEMO.maintenance.length === 1 ? "" : "s"}, starting with ${DEMO.maintenance[0].asset}`);
   return items;
@@ -310,65 +341,207 @@ function buildAiInsights() {
     : delta > 0 ? `Jobs completed rose by ${delta} versus the previous shift.`
     : delta < 0 ? `Jobs completed fell by ${Math.abs(delta)} versus the previous shift.`
     : "Jobs completed held steady versus the previous shift.";
-  const overdue = computedJobsOverdue();
+  const unworked = computedUnworkedJobs();
   return [
     { icon: "trend",  text: completedText },
     { icon: "users",  text: `Team utilization is optimal at ${DEMO.team.utilizationRate}%.` },
     { icon: "target", text: `On-time performance is holding at ${DEMO.gauge.value}% today.` },
-    { icon: "alarm",  text: `Focus on clearing ${overdue} overdue job${overdue === 1 ? "" : "s"} to stay on target.` },
+    { icon: "alarm",  text: `Focus on clearing ${unworked} unworked job${unworked === 1 ? "" : "s"} to stay on target.` },
   ];
 }
 
 /* --------------------------- dashboard: KPI card ----------------------------- */
-function buildKpiCard({ label, value, sub, tone, delta, ring }) {
+function buildKpiCard({ label, value, sub, tone, delta, icon }) {
+  const subHtml = sub ? `<div class="stat-card2-sub stat-card2-sub-plain">${esc(sub)}</div>` : "";
   const deltaHtml = delta
-    ? `<div class="stat-card-delta stat-card-delta-${delta.dir}">
+    ? `<div class="stat-card2-sub stat-card2-sub-${delta.dir === "up" ? "up" : "down"}">
         <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="${delta.dir === "up" ? "M12 4l8 12H4z" : "M12 20 4 8h16z"}"/></svg>
         ${esc(delta.delta)} vs yesterday
       </div>`
-    : `<div class="stat-card-sub">${esc(sub)}</div>`;
-  const ringHtml = ring != null
-    ? `<div class="stat-card-ring">${buildRingSvg(ring, { color: TONE[tone] })}<span>${ring}%</span></div>`
     : "";
   return `
-    <div class="stat-card stat-card-accent-${tone}">
-      <div class="stat-card-top">
-        <div>
-          <div class="stat-card-value">${esc(value)}</div>
-          <div class="stat-card-label">${esc(label)}</div>
-        </div>
-        ${ringHtml}
+    <div class="stat-card2">
+      <div class="stat-card2-icon stat-card2-icon-${tone}">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CAT_ICON[icon]}</svg>
       </div>
-      ${deltaHtml}
+      <div>
+        <div class="stat-card2-value">${esc(value)}</div>
+        <div class="stat-card2-label">${esc(label)}</div>
+        ${subHtml}${deltaHtml}
+      </div>
     </div>`;
 }
 
 /* --------------------------- dashboard: section builders --------------------- */
+// Status KPIs only — revenue moved to its own dedicated section
+// (revenueOverviewSectionHtml) and the narrative paragraph to its own card
+// (yesterdaySummaryCardHtml), matching the reorganized reference layout.
 function executiveSummarySectionHtml() {
-  const overdue = computedJobsOverdue();
+  const unworked = computedUnworkedJobs();
   const cards = [
-    buildKpiCard({ label: "Total Jobs", value: DEMO.jobsScheduled, sub: "scheduled for the shift", tone: "info" }),
+    buildKpiCard({ label: "Total Jobs", value: DEMO.jobsScheduled, sub: "scheduled for the shift", tone: "info", icon: "calendar" }),
     buildKpiCard({
-      label: "Jobs Completed", value: DEMO.kpis[0].value, tone: "success",
+      label: "Jobs Completed", value: DEMO.kpis[0].value, tone: "success", icon: "check",
+      sub: `${Math.round((DEMO.kpis[0].value / DEMO.jobsScheduled) * 100)}% completion rate`,
       delta: DEMO.kpis[0].trend ? { dir: DEMO.kpis[0].trend.dir, delta: DEMO.kpis[0].trend.delta } : null,
-      ring: Math.round((DEMO.kpis[0].value / DEMO.jobsScheduled) * 100),
     }),
-    buildKpiCard({ label: "Jobs Pending", value: DEMO.jobsPending, sub: "rolled into today", tone: "warning" }),
-    buildKpiCard({ label: "Pending Approvals", value: DEMO.approvals.length, sub: "ready to approve", tone: "warning" }),
-    buildKpiCard({ label: "Overdue Jobs", value: overdue, sub: "need attention", tone: "danger" }),
+    buildKpiCard({ label: "Jobs Pending", value: DEMO.jobsPending, sub: "rolled into today", tone: "warning", icon: "clock" }),
+    buildKpiCard({ label: "Pending Approvals", value: DEMO.approvals.length, sub: "ready to approve", tone: "purple", icon: "shield" }),
+    buildKpiCard({ label: "Unworked Jobs", value: unworked, sub: "never picked up", tone: "danger", icon: "alarm" }),
   ].join("");
 
   return `
     <section class="db-section" id="sec-executive-summary">
       <div class="db-callout">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h0M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>
-        <div>
-          <p class="db-callout-title">Good ${greetingWord()}, ${esc(DEMO.userName)}! Here's your AI-generated briefing.</p>
-          <p class="db-callout-sub">${esc(calloutSummaryText())}</p>
+        <div class="db-callout-main">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h0M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>
+          <div>
+            <p class="db-callout-title">Good ${greetingWord()}, ${esc(DEMO.userName)}! Here's your AI-generated briefing.</p>
+            <p class="db-callout-sub">${esc(calloutSummaryText())}</p>
+          </div>
         </div>
+        <span class="db-callout-badge">Data as of ${esc(generatedAtTime)} · Complete</span>
       </div>
       <div class="db-stat-row">${cards}</div>
+    </section>`;
+}
+
+// The AI narrative paragraph, promoted to its own card (used to live inline
+// at the bottom of Executive Summary) so it sits alongside Schedule
+// Highlights and Risks & Alerts instead of stretching the KPI section.
+function yesterdaySummaryCardHtml() {
+  return `
+    <div class="op-card db-card">
+      <div class="db-card-head"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6M9 9h1"/></svg>Yesterday Summary</div>
       <p class="rp-narrative">${esc(currentNarrative)}</p>
+    </div>`;
+}
+
+// Revenue Overview: 3 stat blocks (Yesterday/This Week/Month-to-Date), a
+// trailing-7-day trend bar chart, and a same-day revenue-by-operation donut.
+// All of it comes from REVENUE, computed by applyShiftMetrics() from the
+// same "yesterday" anchor date as the status KPIs above, so the whole
+// dashboard describes one consistent day.
+function revenueStatBlockHtml({ value, label, sub, deltaPct, sparkline }) {
+  const deltaHtml = deltaPct != null
+    ? `<span class="revenue-stat-delta-${deltaPct >= 0 ? "up" : "down"}">${deltaPct >= 0 ? "↑" : "↓"} ${Math.abs(deltaPct)}% vs prior week</span>`
+    : "";
+  const sparkHtml = sparkline ? `<div class="revenue-stat-spark">${buildSparklineSvg(sparkline)}</div>` : "";
+  return `
+    <div class="revenue-stat-card">
+      <div class="revenue-stat-value">${esc(value)}</div>
+      <div class="revenue-stat-label">${esc(label)}</div>
+      <div class="revenue-stat-sub">${esc(sub)}${deltaHtml}</div>
+      ${sparkHtml}
+    </div>`;
+}
+
+function buildSparklineSvg(values, { width = 80, height = 22, color = TONE.success } = {}) {
+  if (values.length < 2) return "";
+  const max = Math.max(...values), min = Math.min(...values);
+  const range = max - min || 1;
+  const points = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * width;
+    const y = height - ((v - min) / range) * height;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><polyline points="${points}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+// Rounds a step up to a "nice" 1/2/5/10 × 10^n number, Heckbert-style, so
+// axis ticks read like $20K/$40K instead of $17,432/$34,864.
+function niceStep(value) {
+  if (value <= 0) return 1;
+  const exp = Math.floor(Math.log10(value));
+  const frac = value / Math.pow(10, exp);
+  const niceFrac = frac < 1.5 ? 1 : frac < 3 ? 2 : frac < 7 ? 5 : 10;
+  return niceFrac * Math.pow(10, exp);
+}
+function fmtUSDShort(n) {
+  return n >= 1000 ? `$${Math.round(n / 1000)}K` : fmtUSD(n);
+}
+
+function buildBarChartHtml(series) {
+  const rawMax = Math.max(...series.map((s) => s.revenue), 1);
+  const step = niceStep(rawMax / 3);
+  const axisMax = Math.ceil(rawMax / step) * step;
+  const axisTicks = [];
+  for (let v = axisMax; v >= 0; v -= step) axisTicks.push(v);
+
+  const lastIdx = series.length - 1;
+  const bars = series.map((s, i) => {
+    const pct = axisMax > 0 ? Math.max(2, Math.round((s.revenue / axisMax) * 100)) : 0;
+    const [mm, dd, yyyy] = s.date.split("/");
+    const label = new Date(Number(yyyy), Number(mm) - 1, Number(dd))
+      .toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const isLast = i === lastIdx;
+    return `
+      <div class="bar-chart-col">
+        ${isLast ? `<div class="bar-chart-value">${fmtUSD(s.revenue)}</div>` : ""}
+        <div class="bar-chart-bar${isLast ? " bar-chart-bar-highlight" : ""}" style="height:${pct}%" title="${esc(label)}: ${fmtUSD(s.revenue)}"></div>
+        <div class="bar-chart-label">${esc(label)}</div>
+      </div>`;
+  }).join("");
+  const gridlines = axisTicks.map((t) => {
+    const top = axisMax > 0 ? ((axisMax - t) / axisMax) * 100 : 0;
+    return `<div class="bar-chart-gridline" style="top:${top}%"></div>`;
+  }).join("");
+  return `
+    <div class="bar-chart">
+      <div class="bar-chart-axis">${axisTicks.map((t) => `<span>${fmtUSDShort(t)}</span>`).join("")}</div>
+      <div class="bar-chart-bars">${gridlines}${bars}</div>
+    </div>`;
+}
+
+// Top 4 operation types by yesterday's revenue + an "Other" bucket for the
+// rest, so the donut stays readable even though the source data has ~10
+// operation categories (most of them one-off).
+function revenueOperationDonutHtml(byOperation, total) {
+  const palette = [TONE.info, TONE.success, TONE.warning, TONE.purple, TONE.danger];
+  const top = byOperation.slice(0, 4);
+  const rest = total - top.reduce((sum, o) => sum + o.revenue, 0);
+  const slices = rest > 0.5 ? [...top, { operation: "Other", revenue: rest }] : top;
+  const legend = slices.map((s, i) => `
+    <div class="donut-legend-row">
+      <span class="donut-legend-dot" style="background:${palette[i % palette.length]}"></span>
+      <span class="donut-legend-label" title="${esc(s.operation)}">${esc(s.operation)}</span>
+      <span class="donut-legend-count">${fmtUSD(s.revenue)} (${total ? Math.round((s.revenue / total) * 100) : 0}%)</span>
+    </div>`).join("");
+  return `
+    <div class="db-donut-row">
+      <div class="donut-wrap" style="width:130px;height:130px">
+        ${buildDonutSvg(slices.map((s, i) => ({ value: s.revenue, color: palette[i % palette.length] })), { size: 130, stroke: 18 })}
+        <div class="donut-center-label"><strong>${fmtUSD(total)}</strong><span>Total</span></div>
+      </div>
+      <div class="donut-legend">${legend}</div>
+    </div>`;
+}
+
+function revenueOverviewSectionHtml() {
+  const stats = [
+    revenueStatBlockHtml({
+      value: fmtUSD(REVENUE.revenueYesterday), label: "Revenue Yesterday", sub: `${REVENUE.billableJobsYesterday} billable jobs`,
+      sparkline: REVENUE.dailyTrend.map((d) => d.revenue),
+    }),
+    revenueStatBlockHtml({ value: fmtUSD(REVENUE.revenue7d), label: "Revenue This Week", sub: `${REVENUE.jobs7d} jobs`, deltaPct: REVENUE.revenue7dDeltaPct }),
+    revenueStatBlockHtml({ value: fmtUSD(REVENUE.revenueMTD), label: "Revenue Month-to-Date", sub: `${REVENUE.jobsMTD} jobs` }),
+  ].join("");
+  return `
+    <section class="db-section" id="sec-revenue-overview">
+      <div class="op-card db-card">
+        <div class="db-card-head"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${CAT_ICON.dollar}</svg>Revenue Overview</div>
+        <div class="revenue-overview-row">
+          <div class="revenue-stat-group">${stats}</div>
+          <div class="revenue-chart-col">
+            <p class="revenue-chart-title">Daily Revenue Trend</p>
+            ${buildBarChartHtml(REVENUE.dailyTrend)}
+          </div>
+          <div class="revenue-chart-col">
+            <p class="revenue-chart-title">Revenue by Operation Type</p>
+            ${revenueOperationDonutHtml(REVENUE.byOperationYesterday, REVENUE.revenueYesterday)}
+          </div>
+        </div>
+      </div>
     </section>`;
 }
 
@@ -445,9 +618,9 @@ function risksAlertsCardHtml() {
 function aiInsightsSectionHtml() {
   const insights = buildAiInsights();
   return `
-    <div class="op-card db-card">
+    <div class="op-card db-card db-card-flex">
       <div class="db-card-head"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h0M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>AI Insights</div>
-      <div class="ai-insight-grid">
+      <div class="ai-insight-list">
         ${insights.map((i) => `
           <div class="ai-insight-item">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:#5A8DEE">${CAT_ICON[i.icon]}</svg>
@@ -518,7 +691,7 @@ function actionsRecommendedSectionHtml() {
 // exist even mid-load, and so the real content drops into the same shape.
 function renderDashboardSkeleton() {
   const kpiSkel = Array.from({ length: 5 }, () => `
-    <div class="stat-card"><div class="skel skel-value"></div><div class="skel skel-label"></div></div>`).join("");
+    <div class="stat-card2"><div class="skel skel-value"></div><div class="skel skel-label"></div></div>`).join("");
   const cardSkel = `
     <div class="op-card db-card">
       <div class="skel skel-title" style="width:140px"></div>
@@ -533,19 +706,18 @@ function renderDashboardSkeleton() {
         <div class="skel skel-line" style="width:85%;margin-bottom:0"></div>
       </div>
       <div class="db-stat-row">${kpiSkel}</div>
-      <div class="rp-narrative skel-narrative-box">
-        <div class="skel skel-line"></div>
-        <div class="skel skel-line" style="width:92%"></div>
-        <div class="skel skel-line" style="width:55%;margin-bottom:0"></div>
-      </div>
     </section>
-    <div class="db-row-3col">
-      <section class="db-section" id="sec-jobs-overview">${cardSkel}</section>
+    <section class="db-section" id="sec-revenue-overview">${cardSkel}</section>
+    <section class="db-section" id="sec-yesterday-summary">${cardSkel}</section>
+    <div class="db-row-2col">
       <section class="db-section" id="sec-schedule-highlights">${cardSkel}</section>
       <section class="db-section" id="sec-risks-alerts">${cardSkel}</section>
     </div>
+    <div class="db-row-2col">
+      <section class="db-section" id="sec-jobs-overview">${cardSkel}</section>
+      <section class="db-section" id="sec-ai-insights">${cardSkel}</section>
+    </div>
     <section class="db-section" id="sec-team-utilization">${cardSkel}</section>
-    <section class="db-section" id="sec-ai-insights">${cardSkel}</section>
     <section class="db-section" id="sec-approvals-pending">${cardSkel}</section>
     <section class="db-section" id="sec-actions-recommended">${cardSkel}</section>`;
 }
@@ -553,13 +725,17 @@ function renderDashboardSkeleton() {
 function renderDashboard() {
   $("dashboardMain").innerHTML = [
     executiveSummarySectionHtml(),
-    `<div class="db-row-3col">
-       <section class="db-section" id="sec-jobs-overview">${jobsOverviewCardHtml()}</section>
+    revenueOverviewSectionHtml(),
+    `<section class="db-section" id="sec-yesterday-summary">${yesterdaySummaryCardHtml()}</section>`,
+    `<div class="db-row-2col">
        <section class="db-section" id="sec-schedule-highlights">${scheduleHighlightsCardHtml()}</section>
        <section class="db-section" id="sec-risks-alerts">${risksAlertsCardHtml()}</section>
      </div>`,
+    `<div class="db-row-2col">
+       <section class="db-section" id="sec-jobs-overview">${jobsOverviewCardHtml()}</section>
+       <section class="db-section" id="sec-ai-insights">${aiInsightsSectionHtml()}</section>
+     </div>`,
     `<section class="db-section" id="sec-team-utilization">${teamUtilizationSectionHtml()}</section>`,
-    `<section class="db-section" id="sec-ai-insights">${aiInsightsSectionHtml()}</section>`,
     `<section class="db-section" id="sec-approvals-pending">${approvalsPendingSectionHtml()}</section>`,
     `<section class="db-section" id="sec-actions-recommended">${actionsRecommendedSectionHtml()}</section>`,
   ].join("");
@@ -777,6 +953,17 @@ async function openEmailPreview() {
 }
 
 /* --------------------------- dashboard: generate / regenerate --------------- */
+// Shown whenever Gemini isn't reachable/configured. Built from live DEMO
+// values (same shape as the old hardcoded DEMO.narrative paragraph) rather
+// than a fixed string, so it can't drift out of sync with the KPI tiles
+// once applyShiftMetrics() starts overwriting ticketsClosed/sitesTouched/
+// crewClockedIn from real data.
+function fallbackNarrative() {
+  const totalOverHours = DEMO.overran.reduce((sum, o) => sum + o.over, 0);
+  const top = DEMO.maintenance[0];
+  return `Yesterday's shift closed ${DEMO.ticketsClosed} ticket${DEMO.ticketsClosed === 1 ? "" : "s"} across ${DEMO.sitesTouched} site${DEMO.sitesTouched === 1 ? "" : "s"}. Of ${DEMO.jobsScheduled} jobs scheduled, ${DEMO.kpis[0].value} were completed and ${DEMO.jobsPending} carried over into today; ${DEMO.overran.length} ran over estimate for a combined ${totalOverHours.toFixed(2)} hours of overrun, and ${DEMO.late.length} deployments or arrivals were logged late. ${DEMO.crewClockedIn} crew members clocked a total of ${DEMO.kpis[3].value} hours. ${DEMO.approvals.length} approvals are awaiting your review, and ${DEMO.maintenance.length} maintenance items are overdue${top ? ` — the highest priority being the ${top.asset}, now ${top.due}` : ""}.`;
+}
+
 async function fetchNarrative() {
   try {
     const res = await fetch("/api/generate-report", {
@@ -789,14 +976,153 @@ async function fetchNarrative() {
       currentNarrative = data.narrative;
     } else {
       console.warn("Gemini generation unavailable, using curated narrative:", data.error);
-      currentNarrative = DEMO.narrative;
+      currentNarrative = fallbackNarrative();
     }
   } catch (err) {
     console.warn("Gemini generation request failed, using curated narrative:", err);
-    currentNarrative = DEMO.narrative;
+    currentNarrative = fallbackNarrative();
   }
   generatedAtTime = nowTime();
   updateAboutText();
+}
+
+// Counts derived straight from a day's job rows. Deliberately NOT
+// jobsScheduled/Completed/Pending/InProgress: those four are a closed,
+// mutually-exclusive split (jobsScheduled ≡ their sum, see
+// computedUnworkedJobs()) tied to a jobStatus field this data doesn't have —
+// overwriting jobsScheduled alone from a real, independently-varying count
+// broke that invariant (Unworked Jobs would clamp to 0 on any day real
+// volume undercut the curated completed+pending+inProgress). Tickets
+// Closed/Sites Touched/Crew Clocked In carry no such constraint, so they're
+// safe to derive from real data.
+// Also sums Total ($) and counts billable (Total > 0) rows, and buckets
+// revenue by Operation — all for this single day only, so the Revenue
+// Overview section's donut total matches its "Revenue Yesterday" stat block.
+function computeShiftMetrics(jobs, dateStr) {
+  const rows = jobs.filter((j) => j["Start Date"] === dateStr);
+  const tickets = new Set(), sites = new Set(), crew = new Set();
+  let revenue = 0, billableJobs = 0;
+  const byOperation = new Map();
+  rows.forEach((j) => {
+    String(j["Tickets"]).split(",").forEach((t) => tickets.add(t.trim()));
+    sites.add(`${j["Lease"]}|${j["Well"]}`);
+    String(j["Employee"]).split(",").forEach((e) => crew.add(e.trim()));
+    const total = j["Total"] || 0;
+    revenue += total;
+    if (total > 0) billableJobs++;
+    byOperation.set(j["Operation"], (byOperation.get(j["Operation"]) || 0) + total);
+  });
+  return {
+    rowCount: rows.length, ticketsClosed: tickets.size, sitesTouched: sites.size, crewClockedIn: crew.size,
+    revenue, billableJobs,
+    byOperation: [...byOperation.entries()]
+      .map(([operation, opRevenue]) => ({ operation, revenue: opRevenue }))
+      .filter((o) => o.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue),
+  };
+}
+
+// Sums Total ($) for the `days`-day window ending on (and including) endDate.
+function sumRevenueWindow(jobs, endDate, days) {
+  const start = new Date(endDate);
+  start.setDate(start.getDate() - (days - 1));
+  let revenue = 0, count = 0;
+  jobs.forEach((j) => {
+    const d = new Date(j["Start Date"]);
+    if (d >= start && d <= endDate) { revenue += j["Total"] || 0; count++; }
+  });
+  return { revenue, count };
+}
+
+// Sums Total ($) from the 1st of endDate's month through endDate.
+function sumRevenueMTD(jobs, endDate) {
+  let revenue = 0, count = 0;
+  jobs.forEach((j) => {
+    const d = new Date(j["Start Date"]);
+    if (d.getFullYear() === endDate.getFullYear() && d.getMonth() === endDate.getMonth() && d <= endDate) {
+      revenue += j["Total"] || 0; count++;
+    }
+  });
+  return { revenue, count };
+}
+
+// Per-day revenue for the trailing `days` days ending on endDate — feeds the
+// Daily Revenue Trend bar chart.
+function dailyRevenueSeries(jobs, endDate, days) {
+  const series = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(endDate);
+    d.setDate(d.getDate() - i);
+    const key = shiftDateKey(d);
+    const revenue = jobs.filter((j) => j["Start Date"] === key).reduce((sum, j) => sum + (j["Total"] || 0), 0);
+    series.push({ date: key, revenue });
+  }
+  return series;
+}
+
+// Overwrites Tickets Closed / Sites Touched / Crew Clocked In on DEMO, and
+// rebuilds REVENUE, all anchored to the same "yesterday" date (the shift
+// this briefing reports on) so every number on the dashboard describes the
+// same day. Falls back to the most recent date the file actually has if the
+// exact day falls outside its window (e.g. demoed well after the data was
+// generated), and leaves DEMO/REVENUE untouched if neither lookup finds
+// anything.
+function applyShiftMetrics(data) {
+  if (!data || !Array.isArray(data.jobs) || !data.jobs.length) return;
+  const jobs = data.jobs;
+  // Zeroed to midnight: sumRevenueWindow/sumRevenueMTD compare whole days,
+  // and a `new Date()` timestamp (today's wall-clock time) as the boundary
+  // would cut off part of the oldest day in every window — e.g. loading the
+  // page at 4pm would exclude same-day-but-earlier rows from 7 days back.
+  let anchorDate = new Date();
+  anchorDate.setDate(anchorDate.getDate() - 1);
+  anchorDate.setHours(0, 0, 0, 0);
+  let shift = computeShiftMetrics(jobs, shiftDateKey(anchorDate));
+  if (!shift.rowCount && data.dateRange?.end) {
+    anchorDate = new Date(data.dateRange.end);
+    anchorDate.setHours(0, 0, 0, 0);
+    shift = computeShiftMetrics(jobs, shiftDateKey(anchorDate));
+  }
+  if (!shift.rowCount) return;
+
+  DEMO.ticketsClosed = shift.ticketsClosed;
+  DEMO.sitesTouched = shift.sitesTouched;
+  DEMO.crewClockedIn = shift.crewClockedIn;
+
+  const week = sumRevenueWindow(jobs, anchorDate, 7);
+  const prevWeekEnd = new Date(anchorDate);
+  prevWeekEnd.setDate(prevWeekEnd.getDate() - 7);
+  const prevWeek = sumRevenueWindow(jobs, prevWeekEnd, 7);
+  const mtd = sumRevenueMTD(jobs, anchorDate);
+
+  REVENUE = {
+    revenueYesterday: shift.revenue,
+    jobsYesterday: shift.rowCount,
+    billableJobsYesterday: shift.billableJobs,
+    revenue7d: week.revenue,
+    jobs7d: week.count,
+    revenue7dDeltaPct: prevWeek.revenue > 0 ? Math.round(((week.revenue - prevWeek.revenue) / prevWeek.revenue) * 100) : null,
+    revenueMTD: mtd.revenue,
+    jobsMTD: mtd.count,
+    byOperationYesterday: shift.byOperation,
+    dailyTrend: dailyRevenueSeries(jobs, anchorDate, 7),
+  };
+}
+
+// Pulls revenue/billing figures and the 3 derivable shift counts from the
+// synthetic Field Service Report data checked into
+// assets/field-service-data.json. On failure (file missing, bad fetch)
+// REVENUE keeps its hardcoded fallback and DEMO keeps its curated values,
+// so the dashboard never shows a blank/broken card.
+async function fetchRevenueData() {
+  try {
+    const res = await fetch("assets/field-service-data.json");
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const data = await res.json();
+    applyShiftMetrics(data);
+  } catch (err) {
+    console.warn("Field service data unavailable, using fallback figures:", err);
+  }
 }
 
 // Runs once, on load: skeleton → fetch → full render. Builds the entire
@@ -804,6 +1130,11 @@ async function fetchNarrative() {
 async function generateBriefing() {
   $("dashboardMain").innerHTML = renderDashboardSkeleton();
   const minDelay = new Promise((r) => setTimeout(r, 700));
+  // Must land before fetchNarrative() so its payload (built from DEMO)
+  // reflects the shift counts applyShiftMetrics() may have just overwritten
+  // — otherwise the AI narrative and the dashboard could cite different
+  // numbers for the same shift.
+  await fetchRevenueData();
   await Promise.all([fetchNarrative(), minDelay]);
   renderDashboard();
 }
@@ -829,11 +1160,18 @@ async function regenerateNarrative() {
 function wireScrollSpy() {
   const sections = Array.from(document.querySelectorAll(".db-section[id]"));
   if (!sections.length) return;
+  // IntersectionObserver callbacks only report entries whose intersection
+  // status *changed* since the last firing, not every currently-visible
+  // section — so state must be tracked across callbacks rather than derived
+  // solely from the latest `entries` array, or a fast scroll (e.g. from a
+  // sidebar click) can leave a stale/wrong section highlighted.
+  const intersecting = new Map(sections.map((s) => [s.id, false]));
   const observer = new IntersectionObserver((entries) => {
-    const visible = entries
-      .filter((e) => e.isIntersecting)
-      .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-    if (visible[0]) setActiveSidebarItem(visible[0].target.id);
+    entries.forEach((e) => intersecting.set(e.target.id, e.isIntersecting));
+    const visible = sections
+      .filter((s) => intersecting.get(s.id))
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+    if (visible[0]) setActiveSidebarItem(visible[0].id);
   }, { rootMargin: "-140px 0px -55% 0px", threshold: 0 });
   sections.forEach((s) => observer.observe(s));
 }

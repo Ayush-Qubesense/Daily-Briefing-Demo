@@ -16,34 +16,38 @@
      • Hours Worked / Crew→ FormDataPRIDPayRollReportTimeCardLogs (sum) · headcount = COUNT(DISTINCT EmployeeId)
      • Overdue Maintenance→ MaintenanceDueList: DueDate < now AND Status <> 'Completed' AND IsIgnored = 0
 
-   TO PERSONALIZE FOR A DEMO: change userName / userEmail below. If you change a
-   KPI, keep the `narrative` sentence self-consistent with it.
+   TO PERSONALIZE FOR A DEMO: change userName / userEmail below. ticketsClosed,
+   sitesTouched, and crewClockedIn are overwritten at runtime from
+   assets/field-service-data.json (see applyShiftMetrics() in script.js) — edit
+   that file to change those 3. jobsScheduled stays fully curated here: it's the
+   sum of jobsPending/jobsInProgress/kpis[0] (completed) + a computed "unworked"
+   residual (see computedUnworkedJobs() in script.js), so it can't be swapped
+   independently without breaking that split. Edit the fields below for
+   everything else.
    ============================================================================ */
 
 const DEMO = {
   // --- Persona -------------------------------------------------------------
-  userName: "Manager",
-  userInitials: "MG",
-  userEmail: "manager.n@indoglobus.com",
+  userName: "Michael",
+  userInitials: "M",
+  userEmail: "michael.n@indoglobus.com",
   role: "Manager / Supervisor",
   org: "NG Fleet",
   // Generation time is computed live from the visitor's clock (see nowTime()
   // in script.js), not stored here — a fixed timestamp would go stale.
 
   // --- AI narrative (the "AI wrote this" moment) ---------------------------
-  narrative:
-    "Yesterday's shift closed 6 tickets across 4 sites. Of 14 jobs scheduled, 9 " +
-    "were completed and 3 carried over into today; 4 ran over estimate for a " +
-    "combined 6.25 hours of overrun, and 4 deployments or arrivals were logged " +
-    "late. Sixteen crew members clocked a total of 108.5 hours. Five approvals " +
-    "are awaiting your review, and four maintenance items are overdue — the " +
-    "highest priority being the Vehicle NG-114 service, now 2 days past due.",
+  // No curated paragraph here on purpose: the fallback shown when Gemini is
+  // unavailable is now built by fallbackNarrative() in script.js from the
+  // fields below, so it can't drift out of sync with the KPI tiles once
+  // applyShiftMetrics() overwrites ticketsClosed/sitesTouched/crewClockedIn
+  // from assets/field-service-data.json.
 
   // --- Shift totals + gauge ------------------------------------------------
   jobsScheduled: 14,                            // FormDataPRIDEDispatchTicketChild, shiftdate = @date
   jobsPending: 3,                               // rolled into today · jobStatus = 'Pending'
   jobsInProgress: 1,                            // jobStatus = 'InProgress' — with kpis[0].value (completed) and
-                                                 // jobsPending, exhaustively splits jobsScheduled; the 4th ("overdue")
+                                                 // jobsPending, exhaustively splits jobsScheduled; the 4th ("unworked")
                                                  // bucket is a computed residual, not stored (see script.js)
   ticketsClosed: 6,                             // FormDataPRIDEDispatchTicket.status = 'Closed'
   sitesTouched: 4,                              // COUNT(DISTINCT SiteID) for closed tickets

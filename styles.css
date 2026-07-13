@@ -23,6 +23,7 @@
   --op-high:      #ff9f43;
   --op-medium:    #d97706;
   --op-low:       #28c76f;
+  --op-purple:    #7367F0;
   --op-card-shadow: 0 4px 24px 0 rgba(34, 41, 47, .06);
 }
 
@@ -238,38 +239,59 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 
 /* --------------------------- AI callout ---------------------------------------- */
 .db-callout {
-  display: flex; align-items: flex-start; gap: 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
   background: rgba(90, 141, 238, .06); border: 1px solid rgba(90, 141, 238, .18);
   border-radius: 12px; padding: 14px 16px; margin-bottom: 18px; color: var(--op-primary);
 }
+.db-callout-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .db-callout-title { font-size: 13.5px; font-weight: 700; color: var(--op-ink); margin: 0 0 3px; }
 .db-callout-sub { font-size: 13px; color: var(--op-muted); margin: 0; }
-
-/* --------------------------- KPI stat cards ------------------------------------ */
-.db-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 18px; }
-.stat-card {
-  background: #fff; border: 1px solid var(--op-border);
-  border-left-width: 4px; border-left-style: solid;
-  border-radius: 12px; padding: 14px 16px; box-shadow: var(--op-card-shadow);
+.db-callout-badge {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700;
+  padding: 4px 11px; border-radius: 999px; background: rgba(40, 199, 111, .14);
+  color: var(--op-low); white-space: nowrap; flex-shrink: 0;
 }
-.stat-card-accent-success { border-left-color: var(--op-low); }
-.stat-card-accent-danger  { border-left-color: var(--op-critical); }
-.stat-card-accent-warning { border-left-color: var(--op-high); }
-.stat-card-accent-info    { border-left-color: var(--op-primary); }
-.stat-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.stat-card-value { font-size: 24px; font-weight: 700; color: var(--op-ink); line-height: 1.1; }
-.stat-card-label { font-size: 12px; color: var(--op-muted); margin-top: 3px; }
-.stat-card-sub { font-size: 11.5px; color: var(--op-light); margin-top: 8px; }
-.stat-card-delta { display: flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600; margin-top: 8px; }
-.stat-card-delta-up   { color: var(--op-low); }
-.stat-card-delta-down { color: var(--op-critical); }
-.stat-card-ring { position: relative; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.stat-card-ring span { position: absolute; font-size: 11px; font-weight: 700; color: var(--op-ink); }
 
-/* --------------------------- 3-column row + generic dashboard card ------------- */
-.db-row-3col { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 20px; align-items: start; }
-@media (max-width: 900px) { .db-row-3col { grid-template-columns: 1fr; } }
+/* --------------------------- KPI stat cards (icon-square style) ---------------- */
+.db-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.stat-card2 {
+  display: flex; align-items: flex-start; gap: 12px;
+  background: #fff; border: 1px solid var(--op-border);
+  border-radius: 12px; padding: 16px; box-shadow: var(--op-card-shadow);
+}
+.stat-card2-icon {
+  width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+}
+.stat-card2-icon-success { background: var(--op-low); }
+.stat-card2-icon-danger  { background: var(--op-critical); }
+.stat-card2-icon-warning { background: var(--op-high); }
+.stat-card2-icon-info    { background: var(--op-primary); }
+.stat-card2-icon-purple  { background: var(--op-purple); }
+.stat-card2-value { font-size: 22px; font-weight: 700; color: var(--op-ink); line-height: 1.1; }
+.stat-card2-label { font-size: 12px; color: var(--op-muted); margin-top: 2px; }
+.stat-card2-sub { display: flex; align-items: center; gap: 4px; font-size: 11px; margin-top: 6px; }
+.stat-card2-sub-plain { color: var(--op-light); }
+.stat-card2-sub-up     { color: var(--op-low); font-weight: 600; }
+.stat-card2-sub-down   { color: var(--op-critical); font-weight: 600; }
+
+/* --------------------------- 2-column row + generic dashboard card -- */
+/* align-items: stretch (grid's default, made explicit here) so paired cards
+   in the same row always match height. Only .op-card gets an explicit
+   height:100% (against .db-section's own grid-stretched size) — giving
+   .db-section itself height:100% too would make its percentage height
+   circular against the very track size stretch is computing, which in
+   practice made browsers size the track from content only and drop its
+   margin-bottom, collapsing the gap before the next row. */
+.db-row-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: stretch; }
+@media (max-width: 900px) { .db-row-2col { grid-template-columns: 1fr; } }
+.db-row-2col > .db-section > .op-card { height: 100%; }
 .db-card { padding: 18px 18px 16px; }
+/* A card whose body content should stretch to fill leftover height (instead
+   of clustering at the top with blank space below) when stretched taller
+   than its own content by a paired card in the same .db-row-2col — e.g.
+   AI Insights next to the taller Jobs Overview donut card. */
+.db-card-flex { display: flex; flex-direction: column; }
 .db-card-head { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--op-ink); margin-bottom: 4px; }
 .db-card-head svg { color: var(--op-primary); flex-shrink: 0; }
 .db-card-caption { font-size: 12px; color: var(--op-light); margin: 0 0 12px; }
@@ -284,8 +306,8 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .donut-legend { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 140px; }
 .donut-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--op-muted); }
 .donut-legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-.donut-legend-label { flex: 1; }
-.donut-legend-count { font-weight: 600; color: var(--op-ink); }
+.donut-legend-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.donut-legend-count { font-weight: 600; color: var(--op-ink); flex-shrink: 0; white-space: nowrap; }
 
 /* --------------------------- schedule highlights --------------------------------- */
 .schedule-highlight-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--op-border); }
@@ -307,8 +329,14 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .risk-alert-desc { font-size: 11.5px; color: var(--op-light); margin-top: 1px; }
 
 /* --------------------------- AI insights ------------------------------------------ */
-.ai-insight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 20px; }
-.ai-insight-item { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--op-ink); line-height: 1.4; }
+/* A bordered vertical list (same visual language as .risk-alert-row /
+   .schedule-highlight-row) rather than a 2-col grid — a grid of 4 short
+   items stretched to match a taller paired card just leaves a hollow gap
+   in the middle; a padded list with dividers uses the extra height
+   per-row instead, so it reads as a complete card, not a stretched one. */
+.ai-insight-list { display: flex; flex-direction: column; }
+.ai-insight-item { display: flex; align-items: flex-start; gap: 9px; padding: 11px 0; border-bottom: 1px solid var(--op-border); font-size: 13px; color: var(--op-ink); line-height: 1.4; }
+.ai-insight-item:last-of-type { border-bottom: none; }
 
 /* --------------------------- approvals & pending (reuses .badge-type/.approve-btn) */
 .approval-row { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--op-border); }
@@ -328,6 +356,41 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .action-item { display: flex; align-items: center; gap: 9px; padding: 9px 0; border-bottom: 1px solid var(--op-border); font-size: 13px; color: var(--op-ink); }
 .action-item:last-of-type { border-bottom: none; }
 
+/* --------------------------- revenue overview -------------------------------------- */
+/* One row, 3 columns: stat group | trend chart | operation donut — mirrors
+   the reference layout instead of stacking stats above the charts. */
+.revenue-overview-row { display: grid; grid-template-columns: 1.5fr 1.3fr 1.3fr; gap: 26px; align-items: stretch; }
+@media (max-width: 1100px) { .revenue-overview-row { grid-template-columns: 1fr; } }
+
+.revenue-chart-col { display: flex; flex-direction: column; justify-content: center; }
+
+.revenue-stat-group { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.revenue-stat-card {
+  background: var(--op-canvas); border: 1px solid var(--op-border);
+  border-radius: 10px; padding: 12px 14px;
+}
+.revenue-stat-value { font-size: 22px; font-weight: 700; color: var(--op-primary); line-height: 1.1; }
+.revenue-stat-label { font-size: 12px; font-weight: 600; color: var(--op-ink); margin-top: 4px; }
+.revenue-stat-sub { font-size: 11px; color: var(--op-light); margin-top: 2px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.revenue-stat-delta-up   { color: var(--op-low); font-weight: 600; }
+.revenue-stat-delta-down { color: var(--op-critical); font-weight: 600; }
+.revenue-stat-spark { margin-top: 8px; line-height: 0; }
+
+.revenue-chart-title { font-size: 12.5px; font-weight: 600; color: var(--op-ink); margin: 0 0 10px; }
+
+.bar-chart { display: flex; gap: 8px; }
+.bar-chart-axis { display: flex; flex-direction: column; justify-content: space-between; height: 140px; padding-bottom: 26px; font-size: 10px; color: var(--op-light); text-align: right; flex-shrink: 0; }
+.bar-chart-bars { flex: 1; display: flex; align-items: flex-end; gap: 8px; height: 140px; position: relative; }
+.bar-chart-gridline { position: absolute; left: 0; right: 0; height: 1px; background: var(--op-border); }
+.bar-chart-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; position: relative; z-index: 1; }
+.bar-chart-value {
+  position: absolute; top: -20px; font-size: 10.5px; font-weight: 700; color: var(--op-ink);
+  white-space: nowrap; background: #fff; padding: 1px 5px; border-radius: 5px; border: 1px solid var(--op-border);
+}
+.bar-chart-bar { width: 100%; max-width: 30px; border-radius: 6px 6px 0 0; background: var(--op-primary-l); position: relative; z-index: 1; }
+.bar-chart-bar-highlight { background: var(--op-primary); }
+.bar-chart-label { margin-top: 8px; font-size: 10.5px; color: var(--op-light); }
+
 /* --------------------------- narrative regenerate pulse ------------------------------ */
 .narrative-pulse { animation: narrativePulse 1s ease infinite; }
 @keyframes narrativePulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
@@ -341,9 +404,9 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
   body { background: #fff; }
   .db-shell { display: block; }
   .db-main { padding: 0; }
-  .op-card, .stat-card { box-shadow: none !important; border: 1px solid #ddd !important; break-inside: avoid; }
-  .db-row-3col { display: block; }
-  .db-row-3col > * { margin-bottom: 16px; }
+  .op-card, .stat-card2 { box-shadow: none !important; border: 1px solid #ddd !important; break-inside: avoid; }
+  .db-row-2col { display: block; }
+  .db-row-2col > * { margin-bottom: 16px; }
   .db-callout { border: 1px solid #ddd; background: #fff; }
   * { -webkit-print-color-adjust: exact; print-color-scheme: light; }
 }

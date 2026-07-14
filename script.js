@@ -829,8 +829,17 @@ function buildEmailHighlights() {
   return [
     `${DEMO.jobsScheduled} jobs scheduled — ${onTime} on time, ${late} late, ${DEMO.gauge.value}% on-time rate`,
     `Team utilization is at ${DEMO.team.utilizationRate}%, with ${DEMO.crewClockedIn} crew clocked in`,
-    ...buildActionsRecommended().slice(0, 3),
   ];
+}
+
+// Same top-4-plus-Other split as revenueOperationDonutHtml, but as table rows
+// since the donut chart itself doesn't render in email clients.
+function buildRevenueByOperationRows() {
+  const total = REVENUE.revenueYesterday;
+  const top = REVENUE.byOperationYesterday.slice(0, 4);
+  const rest = total - top.reduce((sum, o) => sum + o.revenue, 0);
+  const slices = rest > 0.5 ? [...top, { operation: "Other", revenue: rest }] : top;
+  return slices.map((s) => [s.operation, fmtUSD(s.revenue), `${total ? Math.round((s.revenue / total) * 100) : 0}%`]);
 }
 
 function buildEmailMessageHtml() {
@@ -848,6 +857,28 @@ function buildEmailMessageHtml() {
   const maintTable = inlineTable(
     ["Asset", "Type", "Status"],
     DEMO.maintenance.map((m) => [m.asset, m.resource, m.due]));
+  const revenueStatsTable = inlineTable(
+    ["Period", "Revenue", "Detail"],
+    [
+      ["Yesterday", fmtUSD(REVENUE.revenueYesterday), `${REVENUE.billableJobsYesterday} billable jobs`],
+      ["This Week", fmtUSD(REVENUE.revenue7d), `${REVENUE.jobs7d} jobs · ${REVENUE.revenue7dDeltaPct >= 0 ? "+" : ""}${REVENUE.revenue7dDeltaPct}% vs prior week`],
+      ["Month-to-Date", fmtUSD(REVENUE.revenueMTD), `${REVENUE.jobsMTD} jobs`],
+    ],
+    [1]);
+  const revenueByOpTable = inlineTable(
+    ["Operation", "Revenue", "% of Total"],
+    buildRevenueByOperationRows(),
+    [1, 2]);
+  const avgHours = (DEMO.kpis[3].value / DEMO.crewClockedIn).toFixed(1);
+  const teamTable = inlineTable(
+    ["Metric", "Value"],
+    [
+      ["Crew Clocked In", DEMO.crewClockedIn],
+      ["Hours Worked", DEMO.kpis[3].value],
+      ["Avg Hours / Crew Member", avgHours],
+      ["Team Utilization", `${DEMO.team.utilizationRate}%`],
+    ],
+    [1]);
 
   return `<!doctype html>
 <html>
@@ -863,10 +894,14 @@ function buildEmailMessageHtml() {
             <p style="margin:0 0 6px;font-size:13.5px;line-height:1.6;color:#2b2f38;">${esc(currentNarrative)}</p>
             ${inlineSectionCard("Briefing highlights", null, inlineBulletList(buildEmailHighlights()), "#5A8DEE")}
             ${inlineStatGrid(reportCategories())}
+            ${inlineSectionCard("Revenue overview", null, revenueStatsTable + revenueByOpTable, "#28c76f")}
             ${inlineSectionCard("Jobs that ran over", DEMO.overran.length, overranTable, "#ff9f43")}
             ${inlineSectionCard("Late deployments & arrivals", DEMO.late.length, lateTable, "#ea5455")}
             ${inlineSectionCard("Approvals pending", DEMO.approvals.length, approvalsTable, "#ff9f43")}
             ${inlineSectionCard("Overdue maintenance", DEMO.maintenance.length, maintTable, "#5A8DEE")}
+            ${inlineSectionCard("AI insights", null, inlineBulletList(buildAiInsights().map((i) => i.text)), "#5A8DEE")}
+            ${inlineSectionCard("Team & utilization", null, teamTable, "#7367F0")}
+            ${inlineSectionCard("Actions recommended", null, inlineBulletList(buildActionsRecommended()), "#5A8DEE")}
             <p style="margin:8px 0 0;padding-top:14px;border-top:1px solid #ebe9f1;font-size:11.5px;color:#6e6b7b;">
               This is a trial send from the OpsFlo AI daily report demo.
             </p>

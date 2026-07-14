@@ -67,7 +67,7 @@ horizontal menu). Fully responsive so it looks right on a projector or a shared 
 | `dev_server.py` | Local-only convenience server (not deployed) — serves the static site + both functions on one port without needing the Vercel CLI. |
 | `requirements.txt` | Python deps for the serverless functions (`Flask`, `google-genai`). |
 | `.env.example` | Template for the SMTP + Gemini env vars the functions need. |
-| `assets/logo.svg` | Fallback SVG wordmark (the top bar uses the exact OpsFlo raster logo, inlined). |
+| `assets/logo.png` | OpsFlo wordmark used in the top navbar (text fallback if it fails to load). |
 | `vercel.json` | Minimal static config (clean URLs). |
 
 Tailwind CSS, the Inter font, and SweetAlert2 load from CDNs (this is a normal website, not a
